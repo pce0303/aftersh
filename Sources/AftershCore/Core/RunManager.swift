@@ -63,18 +63,13 @@ struct RunManager: Sendable {
         do {
             termination = try processRunner.run(executable: resolved, arguments: arguments)
         } catch let error as ProcessLaunchError {
-            // Still attempt an after snapshot so observation failures stay visible.
             let after = snapshotter.capture(
                 watched: prepared.watched,
                 excludeCanonical: prepared.excludeCanonical,
                 phase: .after
             )
-            let scope = makeScope(
-                prepared: prepared,
-                before: before,
-                after: after
-            )
-            writeObservationSummary(scope: scope, commandExecutable: resolved, termination: nil)
+            let scope = makeScope(prepared: prepared, before: before, after: after)
+            writeReceipt(scope: scope, commandExecutable: resolved, termination: nil)
             return launchExitCode(error)
         } catch {
             DiagnosticWriter.error("error: failed to launch: \(error.localizedDescription)")
@@ -87,12 +82,8 @@ struct RunManager: Sendable {
             excludeCanonical: prepared.excludeCanonical,
             phase: .after
         )
-        let scope = makeScope(
-            prepared: prepared,
-            before: before,
-            after: after
-        )
-        writeObservationSummary(
+        let scope = makeScope(prepared: prepared, before: before, after: after)
+        writeReceipt(
             scope: scope,
             commandExecutable: resolved,
             termination: termination,
@@ -131,76 +122,22 @@ struct RunManager: Sendable {
         }
     }
 
-    private func writeObservationSummary(
+    private func writeReceipt(
         scope: ObservationScope,
         commandExecutable: String,
         termination: ProcessTermination?,
         commandDuration: TimeInterval? = nil
     ) {
-        var lines: [String] = []
-        lines.append("AFTERSH OBSERVATION")
-        lines.append("")
-        lines.append("Command")
-        lines.append("  \(commandExecutable)")
-        if let termination {
-            switch termination {
-            case .exited(let code):
-                lines.append("Command exit")
-                lines.append("  \(code)")
-            case .signaled(let signal):
-                lines.append("Command signal")
-                lines.append("  \(signal) (wrapper exit \(termination.wrapperExitCode))")
-            }
-        }
-        if let commandDuration {
-            lines.append("Command duration")
-            lines.append(String(format: "  %.3fs", commandDuration))
-        }
-        lines.append("Observation")
-        lines.append("  \(scope.status.rawValue.uppercased())")
-        lines.append("")
-        lines.append("OBSERVATION SCOPE")
-        lines.append("Watched")
-        if scope.watchedPaths.isEmpty {
-            lines.append("  none")
-        } else {
-            for path in scope.watchedPaths {
-                lines.append("  \(path)")
-            }
-        }
-        lines.append("Excluded")
-        if scope.excludedPaths.isEmpty {
-            lines.append("  none")
-        } else {
-            for exclusion in scope.excludedPaths {
-                lines.append("  \(exclusion.path) (\(exclusion.reason))")
-            }
-        }
-        lines.append("Failed")
-        let failures = scope.failures
-        if failures.isEmpty {
-            lines.append("  none")
-        } else {
-            for failure in failures {
-                lines.append(
-                    "  [\(failure.phase.rawValue)] \(failure.path): \(failure.operation) (\(failure.code)) — \(failure.reason)"
-                )
-            }
-        }
-        lines.append("")
-        lines.append("Coverage")
-        lines.append(
-            "  before: \(scope.before.coverage.successfullyScannedPaths.count) scanned, \(scope.before.coverage.knownAbsentPaths.count) absent, \(scope.before.coverage.unknownSubtrees.count) unknown"
+        let changes = DiffEngine.diff(before: scope.before, after: scope.after)
+        let text = ReceiptRenderer.render(
+            .init(
+                commandExecutable: commandExecutable,
+                termination: termination,
+                commandDuration: commandDuration,
+                scope: scope,
+                changes: changes
+            )
         )
-        lines.append(
-            "  after:  \(scope.after.coverage.successfullyScannedPaths.count) scanned, \(scope.after.coverage.knownAbsentPaths.count) absent, \(scope.after.coverage.unknownSubtrees.count) unknown"
-        )
-        lines.append(
-            "  entries: \(scope.before.entries.count) → \(scope.after.entries.count)"
-        )
-        lines.append("")
-        lines.append("Diff and receipt persistence are not implemented yet.")
-
-        receiptWriter.write(lines.joined(separator: "\n"))
+        receiptWriter.write(text)
     }
 }

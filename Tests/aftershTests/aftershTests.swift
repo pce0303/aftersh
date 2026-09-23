@@ -120,3 +120,114 @@ import Testing
     #expect(snap.coverage.unknownSubtrees.isEmpty)
     #expect(snap.entries.isEmpty)
 }
+
+private func meta(
+    _ path: String,
+    size: Int64 = 1,
+    mtime: Date = Date(timeIntervalSince1970: 100),
+    permissions: UInt16 = 0o644
+) -> FileMetadata {
+    FileMetadata(
+        path: path,
+        type: .file,
+        size: size,
+        modificationTime: mtime,
+        permissions: permissions
+    )
+}
+
+@Test func diffDetectsCreateModifyDelete() {
+    let root = "/tmp/watch"
+    let file = "/tmp/watch/a.txt"
+    let gone = "/tmp/watch/old.txt"
+    let edited = "/tmp/watch/edit.txt"
+
+    let before = FilesystemSnapshot(
+        entries: [
+            root: FileMetadata(
+                path: root,
+                type: .directory,
+                size: 64,
+                modificationTime: Date(timeIntervalSince1970: 1),
+                permissions: 0o755
+            ),
+            gone: meta(gone),
+            edited: meta(edited, size: 1),
+        ],
+        coverage: SnapshotCoverage(successfullyScannedPaths: [root, gone, edited])
+    )
+    let after = FilesystemSnapshot(
+        entries: [
+            root: FileMetadata(
+                path: root,
+                type: .directory,
+                size: 64,
+                modificationTime: Date(timeIntervalSince1970: 1),
+                permissions: 0o755
+            ),
+            file: meta(file),
+            edited: meta(edited, size: 2),
+        ],
+        coverage: SnapshotCoverage(successfullyScannedPaths: [root, file, edited])
+    )
+
+    let changes = DiffEngine.diff(before: before, after: after)
+    #expect(changes.contains { $0.kind == .created && $0.path == file })
+    #expect(changes.contains { $0.kind == .deleted && $0.path == gone })
+    #expect(changes.contains { $0.kind == .modified && $0.path == edited })
+}
+
+@Test func diffSkipsDeleteWhenAfterUnknown() {
+    let file = "/tmp/watch/a.txt"
+    let before = FilesystemSnapshot(
+        entries: [file: meta(file)],
+        coverage: SnapshotCoverage(successfullyScannedPaths: [file])
+    )
+    let after = FilesystemSnapshot(
+        entries: [:],
+        coverage: SnapshotCoverage(
+            successfullyScannedPaths: [],
+            unknownSubtrees: ["/tmp/watch"]
+        )
+    )
+    let changes = DiffEngine.diff(before: before, after: after)
+    #expect(changes.isEmpty)
+}
+
+@Test func diffSkipsCreateWhenBeforeUnknown() {
+    let file = "/tmp/watch/a.txt"
+    let before = FilesystemSnapshot(
+        entries: [:],
+        coverage: SnapshotCoverage(unknownSubtrees: ["/tmp/watch"])
+    )
+    let after = FilesystemSnapshot(
+        entries: [file: meta(file)],
+        coverage: SnapshotCoverage(successfullyScannedPaths: [file])
+    )
+    let changes = DiffEngine.diff(before: before, after: after)
+    #expect(changes.isEmpty)
+}
+
+@Test func diffEmptyWhenUnchanged() {
+    let file = "/tmp/watch/a.txt"
+    let snap = FilesystemSnapshot(
+        entries: [file: meta(file)],
+        coverage: SnapshotCoverage(successfullyScannedPaths: [file])
+    )
+    #expect(DiffEngine.diff(before: snap, after: snap).isEmpty)
+}
+
+@Test func receiptRendererFailedCoverageMessage() {
+    let scope = ObservationScope(status: .failed)
+    let text = ReceiptRenderer.render(
+        .init(
+            commandExecutable: "/bin/echo",
+            termination: .exited(0),
+            scope: scope,
+            changes: []
+        )
+    )
+    #expect(text.contains("AFTERSH RECEIPT"))
+    #expect(text.contains("Changes could not be determined"))
+    #expect(text.contains("Receipt not saved yet."))
+}

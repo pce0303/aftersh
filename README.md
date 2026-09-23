@@ -4,7 +4,7 @@
 
 `aftersh` is a macOS CLI that turns changes observed around a shell command into a human-readable receipt.
 
-**Status: Implementation in progress.** Transparent command execution (`af` / `aftersh`) works; scoped snapshots, receipts, and persistence are next.
+**Status: Implementation in progress.** Transparent execution, scoped snapshots, and CREATE/MODIFY/DELETE receipt rendering work; JSON persistence and `history`/`inspect` are next.
 
 ## Why aftersh?
 
@@ -76,6 +76,8 @@ CREATED
 Receipt saved
   <receipt-id>
 ```
+
+Persistence (`Receipt saved`, `af history`, `af inspect`) arrives in the next milestone; the live receipt currently ends with `Receipt not saved yet.`
 
 `COMPLETE` means the selected, non-excluded scope was scanned successfully at both endpoints. It does not mean every system change was captured. Metadata comparison can miss content changes, and transient changes between snapshots may disappear.
 

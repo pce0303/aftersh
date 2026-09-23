@@ -1,6 +1,6 @@
 # aftersh Roadmap
 
-Status: Implementation in progress. Transparent execution and scoped metadata snapshots are in place; diff/receipt rendering and persistence are next.
+Status: Implementation in progress. Transparent execution, scoped snapshots, and receipt diff rendering are in place; persistence/history/inspect are next.
 
 ## v0.1 — Minimal Receipt
 
@@ -54,12 +54,12 @@ Start with isolated temporary directories. Do not add broad system defaults or h
 
 ### 3. Diff and first receipt
 
-- [ ] Detect CREATE / MODIFY / DELETE from comparable endpoint observations
-- [ ] Never turn failed enumeration into inferred creation/deletion
-- [ ] Show scope, exclusions, failures, and observation status
-- [ ] Display command outcome independently from observation outcome
-- [ ] Use qualified empty-result wording; report unusable coverage explicitly
-- [ ] Document metadata and non-atomic snapshot limitations
+- [x] Detect CREATE / MODIFY / DELETE from comparable endpoint observations
+- [x] Never turn failed enumeration into inferred creation/deletion
+- [x] Show scope, exclusions, failures, and observation status
+- [x] Display command outcome independently from observation outcome
+- [x] Use qualified empty-result wording; report unusable coverage explicitly
+- [x] Document metadata and non-atomic snapshot limitations
 
 Planned demo, using a fresh test directory:
 

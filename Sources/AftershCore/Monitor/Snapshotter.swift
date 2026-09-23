@@ -220,7 +220,7 @@ public struct Snapshotter: Sendable {
         }
 
         return FileMetadata(
-            path: canonicalPath,
+            path: displayPath,
             type: type,
             size: size,
             modificationTime: modificationTime,

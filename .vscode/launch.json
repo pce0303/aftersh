@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:aftersh}",
+            "name": "Debug aftersh",
+            "target": "aftersh",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug aftersh"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:aftersh}",
+            "name": "Release aftersh",
+            "target": "aftersh",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release aftersh"
+        }
+    ]
+}

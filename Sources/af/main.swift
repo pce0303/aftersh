@@ -1,0 +1,3 @@
+import AftershCore
+
+AftershMain.main()

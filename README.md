@@ -2,9 +2,9 @@
 
 > **Know what changed after `sh`.**
 
-`aftersh` is a planned macOS CLI that turns changes observed around a shell command into a human-readable receipt.
+`aftersh` is a macOS CLI that turns changes observed around a shell command into a human-readable receipt.
 
-**Status: Design / Pre-implementation.** This repository currently contains design documents, not a working CLI. All commands and output below describe intended behavior.
+**Status: Implementation in progress.** Transparent command execution (`af` / `aftersh`) works; scoped snapshots, receipts, and persistence are next.
 
 ## Why aftersh?
 
@@ -25,14 +25,31 @@ FSEvents, semantic shell diffs, importance ranking, Launchd inspection, and pack
 
 ### Planned usage
 
+The project name remains **aftersh**; the primary executable is **`af`**. An `aftersh` executable alias will expose the same interface. Execution is the default subcommand, so `run` is optional.
+
 ```bash
-mkdir -p /tmp/aftersh-test
-aftersh run --watch /tmp/aftersh-test -- touch /tmp/aftersh-test/hello
-aftersh history
-aftersh inspect last
+af -w . -e ./node_modules -- npm install
+# Equivalent explicit form:
+aftersh run --watch . --exclude ./node_modules -- npm install
 ```
 
-`--watch` is repeatable and required in v0.1; there is no implicit whole-system scan. `--exclude <path>` optionally excludes a path and its descendants. A fresh test directory produces a receipt like:
+| Short | Long | Purpose |
+| --- | --- | --- |
+| `-w` | `--watch` | Watch a path; repeatable |
+| `-e` | `--exclude` | Exclude a path; repeatable |
+| `-r` | `--receipt-output` | Choose auto, stderr, or none |
+| `-h` | `--help` | Show help |
+
+Use single-letter short options (`-e`, not `-ec`). The required `--` separates aftersh options from the child command and its arguments. `af history` and `af inspect last` remain explicit subcommands.
+
+```bash
+mkdir -p /tmp/aftersh-test
+af -w /tmp/aftersh-test -- touch /tmp/aftersh-test/hello
+af history
+af inspect last
+```
+
+`-w` / `--watch` is repeatable and required in v0.1; there is no implicit whole-system scan. `-e <path>` / `--exclude <path>` optionally excludes a path and its descendants. A fresh test directory produces a receipt like:
 
 ```text
 AFTERSH RECEIPT
@@ -75,10 +92,10 @@ With no comparable coverage, report that changes could not be determined instead
 ### Command transparency
 
 ```bash
-aftersh run --watch /tmp/aftersh-test -- echo hello | grep hello
+af -w /tmp/aftersh-test -- echo hello | grep hello
 ```
 
-**Receipt output must never be written to the child command's stdout stream.** Child stdin, stdout, and stderr retain their normal destinations. Automatic receipt output goes to `/dev/tty` when available, otherwise stderr. Use `--receipt-output stderr` or `--receipt-output none` to choose explicitly; the default is `auto`.
+**Receipt output must never be written to the child command's stdout stream.** Child stdin, stdout, and stderr retain their normal destinations. Automatic receipt output goes to `/dev/tty` when available, otherwise stderr. Use `-r stderr` or `-r none` (long form: `--receipt-output`) to choose explicitly; the default is `auto`.
 
 `run` returns the child's exit code, or `128 + signal` for signal termination. Ctrl-C must reach the child and must not leave it running because only the wrapper exited. Observation and receipt-save errors are reported separately. See the [execution contract](docs/ARCHITECTURE.md#command-execution-contract) for details and limits.
 
@@ -102,23 +119,26 @@ Validate scope and command
   → Render summary
 ```
 
-The following structure is intended and has not yet been implemented:
+The following structure is the current package layout:
 
 ```text
 aftersh/
 ├── Package.swift
-├── Sources/Aftersh/
-│   ├── CLI/
-│   ├── Core/
-│   ├── Monitor/
-│   ├── Diff/
-│   ├── Report/
-│   └── Storage/
+├── Sources/
+│   ├── AftershCore/
+│   │   ├── CLI/
+│   │   ├── Core/
+│   │   ├── Monitor/      # planned
+│   │   ├── Diff/         # planned
+│   │   ├── Report/       # planned
+│   │   └── Storage/      # planned
+│   ├── af/
+│   └── aftersh/
 ├── Tests/
 └── docs/
 ```
 
-Planned stack: Swift, Swift Package Manager, Swift Argument Parser, Foundation, and JSON storage. macOS first; deeper monitoring and inspectors will be added only when needed.
+Stack: Swift, Swift Package Manager, Swift Argument Parser, Foundation, and JSON storage. Primary executable: `af`; alias: `aftersh`. macOS first; deeper monitoring and inspectors will be added only when needed.
 
 ## Roadmap
 

@@ -11,6 +11,8 @@ The human-readable receipt is the product. Collect data only when it makes the r
 - Command failure, observation failure, and persistence failure are independent outcomes.
 - A small, trustworthy scope is preferable to an unexplained whole-system scan.
 
+
+
 ## v0.1 execution flow
 
 ```text
@@ -32,17 +34,27 @@ v0.1 has no runtime watcher or inspectors. Classification and selected content c
 
 ## Components
 
-| Component | Responsibility |
-| --- | --- |
-| CLI | Parse options, call services, choose output destination |
-| RunManager | Coordinate a run and its independent outcomes |
-| ProcessRunner | Execute argv, preserve streams, handle signals and termination |
-| Snapshotter | Capture selected metadata and explicit coverage |
-| DiffEngine | Compare known states without inventing changes from scan errors |
-| ReceiptRenderer | Summarize changes and observation limits |
-| RunStore | Atomically persist versioned receipts and read history |
+
+| Component       | Responsibility                                                  |
+| --------------- | --------------------------------------------------------------- |
+| CLI             | Parse options, call services, choose output destination         |
+| RunManager      | Coordinate a run and its independent outcomes                   |
+| ProcessRunner   | Execute argv, preserve streams, handle signals and termination  |
+| Snapshotter     | Capture selected metadata and explicit coverage                 |
+| DiffEngine      | Compare known states without inventing changes from scan errors |
+| ReceiptRenderer | Summarize changes and observation limits                        |
+| RunStore        | Atomically persist versioned receipts and read history          |
+
 
 Use one Swift package with modular folders. Foundation.Process is the initial execution candidate; verify its behavior against the execution contract before relying on it. Add lower-level process control where tests require it.
+
+## CLI naming and parsing
+
+The project and storage namespace remain `aftersh`. Ship `af` as the primary executable and `aftersh` as an equivalent executable alias, without requiring shell configuration edits.
+
+`run` is the default subcommand: `af -w . -- command` and `aftersh run --watch . -- command` have identical semantics. Keep `history` and `inspect` as explicit subcommands. Require `--` before the child command; every subsequent token belongs to the child, even `--help`, `history`, or `run`. Bare `af` shows help without executing anything.
+
+Support `-w` / `--watch`, `-e` / `--exclude`, `-r` / `--receipt-output`, and `-h` / `--help`. Short options are single letters; do not add `-ec`. Both watch and exclude options are repeatable. Test both executable names, explicit/default run forms, and child arguments that resemble wrapper options or subcommands.
 
 ## Command execution contract
 
@@ -54,6 +66,8 @@ Use one Swift package with modular folders. Foundation.Process is the initial ex
 - `--receipt-output auto` uses `/dev/tty` if it can be opened, otherwise stderr. `stderr` and `none` are explicit alternatives. `none` suppresses the summary; wrapper errors still go to stderr.
 - Render the summary after child termination. Automatic fallback to stderr may mix wrapper text with redirected child stderr; `none` suppresses receipt text in that case.
 - `history` and `inspect` use stdout for their explicitly requested output.
+
+
 
 ### Exit and signal handling
 
@@ -69,7 +83,7 @@ Full shell job control and tracking intentionally detached background processes 
 
 ## Scope and path rules
 
-v0.1 requires one or more `--watch <path>` options. There is no default broad scan. `--exclude <path>` is repeatable and applies to that path and descendants.
+v0.1 requires one or more `-w <path>` / `--watch <path>` options. There is no default broad scan. `-e <path>` / `--exclude <path>` is repeatable and applies to that path and descendants.
 
 Normalize relative paths against the launch working directory; deduplicate overlapping roots. Resolve existing ancestor aliases consistently (including `/tmp` versus `/private/tmp`) while preserving user-facing paths. Do not follow leaf symlinks recursively: record their type and target. Avoid traversing outside the selected scope through symlinks.
 
@@ -136,11 +150,13 @@ Compare metadata for CREATE / MODIFY / DELETE; moves may appear as delete plus c
 
 For future strategies:
 
-| Strategy | Before execution | After execution | Intended use |
-| --- | --- | --- | --- |
-| metadata | Metadata | Metadata | General and large files |
-| hashed | Metadata and digest | Metadata and digest | Explicitly selected byte comparisons |
-| content | Metadata, digest, bounded content | Same | Selected small text configuration files |
+
+| Strategy | Before execution                  | After execution     | Intended use                            |
+| -------- | --------------------------------- | ------------------- | --------------------------------------- |
+| metadata | Metadata                          | Metadata            | General and large files                 |
+| hashed   | Metadata and digest               | Metadata and digest | Explicitly selected byte comparisons    |
+| content  | Metadata, digest, bounded content | Same                | Selected small text configuration files |
+
 
 A before hash must be computed before execution. Hashing a changed file afterwards cannot reconstruct its original state. Textual or semantic diffs require original content captured before execution too.
 

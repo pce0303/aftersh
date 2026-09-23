@@ -1,6 +1,6 @@
 # aftersh Roadmap
 
-Status: Design / Pre-implementation. Only documentation exists today; unchecked items are planned. The first release is deliberately limited to command execution, scoped metadata comparison, and trustworthy saved receipts.
+Status: Implementation in progress. Repository setup and the transparent execution skeleton are in place; snapshots, receipts, and persistence are still planned.
 
 ## v0.1 — Minimal Receipt
 
@@ -13,31 +13,36 @@ Validate → Before snapshot → Command → After snapshot → Diff → Receipt
 - [x] Write README.md
 - [x] Write docs/ARCHITECTURE.md
 - [x] Write docs/ROADMAP.md
-- [ ] Initialize Swift executable package and test target
-- [ ] Add Swift Argument Parser
-- [ ] Add source folders and .gitignore
+- [x] Initialize Swift executable package and test target
+- [x] Add Swift Argument Parser
+- [x] Add source folders and .gitignore
 - [ ] Select a license before public distribution (MIT is a candidate)
 
-Acceptance: `swift run aftersh --help` prints working help.
+Acceptance: `swift run af --help` prints working help.
 
 ### 1. Transparent command execution
 
-- [ ] Implement RunCommand, ProcessRunner, and RunManager
-- [ ] Preserve argv, PATH resolution, working directory, and environment
-- [ ] Inherit stdin/stdout/stderr
+- [x] Provide primary executable `af` and equivalent `aftersh` executable alias
+- [x] Default to `run`; retain explicit `run`, `history`, and `inspect`
+- [x] Require `--` before the child command and preserve all following tokens
+- [x] Support `-h` / `--help`; bare `af` shows help
+- [ ] Verify both names, both execution forms, and child-option/subcommand collisions
+- [x] Implement RunCommand, ProcessRunner, and RunManager
+- [x] Preserve argv, PATH resolution, working directory, and environment
+- [x] Inherit stdin/stdout/stderr
 - [ ] Capture timestamps, duration, exit code, and termination signal
-- [ ] Return child status; define launch and usage errors
-- [ ] Handle Ctrl-C and SIGTERM without leaving ordinary children running
-- [ ] Handle repeat interruption promptly
+- [x] Return child status; define launch and usage errors
+- [x] Handle Ctrl-C and SIGTERM without leaving ordinary children running
+- [x] Handle repeat interruption promptly
 - [ ] Verify foreground terminal reads and interactive commands
-- [ ] Route wrapper UI with `--receipt-output auto|stderr|none`
-- [ ] Keep receipt output out of child stdout
+- [x] Route wrapper UI with `-r` / `--receipt-output auto|stderr|none`
+- [x] Keep receipt output out of child stdout
 
 Acceptance: wrapped echo, stdin consumption, pipelines, nonzero exits, and interactive interruption behave according to the [execution contract](ARCHITECTURE.md#command-execution-contract). Observation/save errors must not overwrite child exit status.
 
 ### 2. Scoped snapshots and coverage
 
-- [ ] Require repeatable `--watch <path>`; support repeatable `--exclude <path>`
+- [ ] Require repeatable `-w` / `--watch <path>`; support repeatable `-e` / `--exclude <path>`
 - [ ] Normalize paths and overlapping roots without following symlinks outside scope
 - [ ] Automatically exclude aftersh storage and record exclusions
 - [ ] Capture file type, size, mtime, permissions, and symlink target
@@ -60,7 +65,7 @@ Planned demo, using a fresh test directory:
 
 ```bash
 mkdir -p /tmp/aftersh-test
-aftersh run --watch /tmp/aftersh-test -- touch /tmp/aftersh-test/hello
+af -w /tmp/aftersh-test -- touch /tmp/aftersh-test/hello
 ```
 
 Acceptance: the new file is reported as CREATED, with complete coverage for the selected root. A failed scan yields partial/failed observation rather than an unqualified claim that nothing changed.
@@ -72,8 +77,8 @@ Acceptance: the new file is reported as CREATED, with complete coverage for the 
 - [ ] Owner-only storage permissions
 - [ ] Omit argv values, environment, child output, and raw file contents from stored receipts
 - [ ] Explicit omitted-argument indicator in history/inspect
-- [ ] `aftersh history`
-- [ ] `aftersh inspect <id>` and `aftersh inspect last`
+- [ ] `af history`
+- [ ] `af inspect <id>` and `af inspect last`
 - [ ] Handle corrupt receipts, unknown schemas, ambiguous IDs, and concurrent runs
 - [ ] Report save failure separately from command status
 
@@ -130,6 +135,8 @@ Acceptance: receipts explain observed service definitions and package receipts w
 - Stronger process-level provenance
 - SQLite if real query needs outgrow JSON
 - Optional GUI or other operating systems after the CLI proves useful
+
+
 
 ## First coding session
 

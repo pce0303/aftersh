@@ -1,6 +1,6 @@
 # aftersh Roadmap
 
-Status: Implementation in progress. Repository setup and the transparent execution skeleton are in place; snapshots, receipts, and persistence are still planned.
+Status: Implementation in progress. Transparent execution and scoped metadata snapshots are in place; diff/receipt rendering and persistence are next.
 
 ## v0.1 — Minimal Receipt
 
@@ -30,7 +30,7 @@ Acceptance: `swift run af --help` prints working help.
 - [x] Implement RunCommand, ProcessRunner, and RunManager
 - [x] Preserve argv, PATH resolution, working directory, and environment
 - [x] Inherit stdin/stdout/stderr
-- [ ] Capture timestamps, duration, exit code, and termination signal
+- [x] Capture timestamps, duration, exit code, and termination signal
 - [x] Return child status; define launch and usage errors
 - [x] Handle Ctrl-C and SIGTERM without leaving ordinary children running
 - [x] Handle repeat interruption promptly
@@ -42,13 +42,13 @@ Acceptance: wrapped echo, stdin consumption, pipelines, nonzero exits, and inter
 
 ### 2. Scoped snapshots and coverage
 
-- [ ] Require repeatable `-w` / `--watch <path>`; support repeatable `-e` / `--exclude <path>`
-- [ ] Normalize paths and overlapping roots without following symlinks outside scope
-- [ ] Automatically exclude aftersh storage and record exclusions
-- [ ] Capture file type, size, mtime, permissions, and symlink target
-- [ ] Record before/after scan intervals and successful/absent/unknown regions
-- [ ] Record scan failures with path, phase, operation, and reason
-- [ ] Distinguish COMPLETE, PARTIAL, and FAILED coverage
+- [x] Require repeatable `-w` / `--watch <path>`; support repeatable `-e` / `--exclude <path>`
+- [x] Normalize paths and overlapping roots without following symlinks outside scope
+- [x] Automatically exclude aftersh storage and record exclusions
+- [x] Capture file type, size, mtime, permissions, and symlink target
+- [x] Record before/after scan intervals and successful/absent/unknown regions
+- [x] Record scan failures with path, phase, operation, and reason
+- [x] Distinguish COMPLETE, PARTIAL, and FAILED coverage
 
 Start with isolated temporary directories. Do not add broad system defaults or hash/content snapshots here.
 

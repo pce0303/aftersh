@@ -224,10 +224,97 @@ private func meta(
             commandExecutable: "/bin/echo",
             termination: .exited(0),
             scope: scope,
-            changes: []
+            changes: [],
+            saveFailed: true
         )
     )
     #expect(text.contains("AFTERSH RECEIPT"))
     #expect(text.contains("Changes could not be determined"))
-    #expect(text.contains("Receipt not saved yet."))
+    #expect(text.contains("Receipt not saved."))
+}
+
+@Test func runStoreSaveReloadAndLast() throws {
+    let fm = FileManager.default
+    let dir = fm.temporaryDirectory.appendingPathComponent("aftersh-store-\(UUID().uuidString)")
+    try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: dir) }
+
+    let store = RunStore(directory: dir, fileManager: fm)
+    let older = makeReceipt(id: "aaaa-1111", endedAt: Date(timeIntervalSince1970: 100))
+    let newer = makeReceipt(id: "bbbb-2222", endedAt: Date(timeIntervalSince1970: 200))
+    try store.save(older)
+    try store.save(newer)
+
+    let listed = store.list(emitDiagnostics: false)
+    #expect(listed.map(\.id) == ["bbbb-2222", "aaaa-1111"])
+
+    let last = try store.load(idOrPrefix: "last")
+    #expect(last.id == "bbbb-2222")
+
+    let byPrefix = try store.load(idOrPrefix: "aaaa")
+    #expect(byPrefix.id == "aaaa-1111")
+}
+
+@Test func runStoreRejectsAmbiguousPrefix() throws {
+    let fm = FileManager.default
+    let dir = fm.temporaryDirectory.appendingPathComponent("aftersh-store-\(UUID().uuidString)")
+    try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: dir) }
+
+    let store = RunStore(directory: dir, fileManager: fm)
+    try store.save(makeReceipt(id: "abcd-1111", endedAt: Date(timeIntervalSince1970: 1)))
+    try store.save(makeReceipt(id: "abcd-2222", endedAt: Date(timeIntervalSince1970: 2)))
+
+    do {
+        _ = try store.load(idOrPrefix: "abcd")
+        Issue.record("expected ambiguous prefix error")
+    } catch RunStoreError.ambiguousPrefix {
+        // expected
+    }
+}
+
+@Test func runStoreSkipsCorruptAndUnsupported() throws {
+    let fm = FileManager.default
+    let dir = fm.temporaryDirectory.appendingPathComponent("aftersh-store-\(UUID().uuidString)")
+    try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: dir) }
+
+    let store = RunStore(directory: dir, fileManager: fm)
+    try store.save(makeReceipt(id: "good-0001", endedAt: Date(timeIntervalSince1970: 50)))
+
+    try "not-json".write(
+        to: dir.appendingPathComponent("bad.json"),
+        atomically: true,
+        encoding: .utf8
+    )
+
+    var unsupported = makeReceipt(id: "future-0001", endedAt: Date(timeIntervalSince1970: 60))
+    unsupported.schemaVersion = 99
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    let data = try encoder.encode(unsupported)
+    try data.write(to: dir.appendingPathComponent("future-0001.json"))
+
+    let listed = store.list(emitDiagnostics: false)
+    #expect(listed.map(\.id) == ["good-0001"])
+}
+
+private func makeReceipt(id: String, endedAt: Date) -> Receipt {
+    Receipt(
+        id: id,
+        commandExecutable: "/bin/echo",
+        startedAt: endedAt.addingTimeInterval(-1),
+        endedAt: endedAt,
+        commandDuration: 1,
+        termination: .exited(0),
+        observation: PersistedObservation(
+            watchedPaths: ["/tmp"],
+            excludedPaths: [],
+            status: .complete,
+            beforeCoverage: SnapshotCoverage(successfullyScannedPaths: ["/tmp"]),
+            afterCoverage: SnapshotCoverage(successfullyScannedPaths: ["/tmp"]),
+            failures: []
+        ),
+        changes: []
+    )
 }

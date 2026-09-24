@@ -11,6 +11,16 @@ struct InspectCommand: ParsableCommand {
     var id: String
 
     func run() throws {
-        print("inspect: not implemented yet (\(id))")
+        let store = RunStore()
+        do {
+            let receipt = try store.load(idOrPrefix: id)
+            print(ReceiptRenderer.render(receipt: receipt))
+        } catch let error as RunStoreError {
+            DiagnosticWriter.error("error: \(error.localizedDescription)")
+            throw ExitCode(2)
+        } catch {
+            DiagnosticWriter.error("error: \(error.localizedDescription)")
+            throw ExitCode(2)
+        }
     }
 }

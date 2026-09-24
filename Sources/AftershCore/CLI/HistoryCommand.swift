@@ -8,6 +8,8 @@ struct HistoryCommand: ParsableCommand {
     )
 
     func run() throws {
-        print("history: not implemented yet")
+        let store = RunStore()
+        let receipts = store.list(emitDiagnostics: true)
+        print(ReceiptRenderer.renderHistory(receipts))
     }
 }

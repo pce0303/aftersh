@@ -1,7 +1,7 @@
 import Foundation
 
 /// How a child process terminated.
-public enum ProcessTermination: Equatable, Sendable {
+public enum ProcessTermination: Equatable, Sendable, Codable {
     case exited(Int32)
     case signaled(Int32)
 
@@ -12,6 +12,40 @@ public enum ProcessTermination: Equatable, Sendable {
             return code
         case .signaled(let signal):
             return 128 + signal
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case code
+        case signal
+    }
+
+    private enum Kind: String, Codable {
+        case exited
+        case signaled
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let kind = try container.decode(Kind.self, forKey: .kind)
+        switch kind {
+        case .exited:
+            self = .exited(try container.decode(Int32.self, forKey: .code))
+        case .signaled:
+            self = .signaled(try container.decode(Int32.self, forKey: .signal))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .exited(let code):
+            try container.encode(Kind.exited, forKey: .kind)
+            try container.encode(code, forKey: .code)
+        case .signaled(let signal):
+            try container.encode(Kind.signaled, forKey: .kind)
+            try container.encode(signal, forKey: .signal)
         }
     }
 }

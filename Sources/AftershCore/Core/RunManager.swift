@@ -5,15 +5,18 @@ struct RunManager: Sendable {
     private let processRunner: ProcessRunner
     private let receiptWriter: ReceiptWriter
     private let snapshotter: Snapshotter
+    private let runStore: RunStore
 
     init(
         processRunner: ProcessRunner,
         receiptWriter: ReceiptWriter,
-        snapshotter: Snapshotter = Snapshotter()
+        snapshotter: Snapshotter = Snapshotter(),
+        runStore: RunStore = RunStore()
     ) {
         self.processRunner = processRunner
         self.receiptWriter = receiptWriter
         self.snapshotter = snapshotter
+        self.runStore = runStore
     }
 
     /// Runs the child command and returns the wrapper exit code.
@@ -63,13 +66,22 @@ struct RunManager: Sendable {
         do {
             termination = try processRunner.run(executable: resolved, arguments: arguments)
         } catch let error as ProcessLaunchError {
+            let endedAt = Date()
             let after = snapshotter.capture(
                 watched: prepared.watched,
                 excludeCanonical: prepared.excludeCanonical,
                 phase: .after
             )
             let scope = makeScope(prepared: prepared, before: before, after: after)
-            writeReceipt(scope: scope, commandExecutable: resolved, termination: nil)
+            // Command never launched successfully; still show observation, do not claim a run receipt.
+            writeReceipt(
+                scope: scope,
+                commandExecutable: resolved,
+                termination: nil,
+                startedAt: startedAt,
+                endedAt: endedAt,
+                persist: false
+            )
             return launchExitCode(error)
         } catch {
             DiagnosticWriter.error("error: failed to launch: \(error.localizedDescription)")
@@ -87,7 +99,9 @@ struct RunManager: Sendable {
             scope: scope,
             commandExecutable: resolved,
             termination: termination,
-            commandDuration: endedAt.timeIntervalSince(startedAt)
+            startedAt: startedAt,
+            endedAt: endedAt,
+            persist: true
         )
 
         return termination.wrapperExitCode
@@ -126,16 +140,50 @@ struct RunManager: Sendable {
         scope: ObservationScope,
         commandExecutable: String,
         termination: ProcessTermination?,
-        commandDuration: TimeInterval? = nil
+        startedAt: Date,
+        endedAt: Date,
+        persist: Bool
     ) {
         let changes = DiffEngine.diff(before: scope.before, after: scope.after)
+        let duration = endedAt.timeIntervalSince(startedAt)
+
+        var savedId: String?
+        var saveFailed = false
+
+        if persist, let termination {
+            let receipt = Receipt(
+                commandExecutable: commandExecutable,
+                argumentsOmitted: true,
+                startedAt: startedAt,
+                endedAt: endedAt,
+                commandDuration: duration,
+                termination: termination,
+                observation: PersistedObservation(scope: scope),
+                changes: changes,
+                interrupted: false
+            )
+            do {
+                try runStore.save(receipt)
+                savedId = receipt.id
+            } catch {
+                saveFailed = true
+                DiagnosticWriter.error(
+                    "error: failed to save receipt: \(error.localizedDescription)"
+                )
+            }
+        } else {
+            saveFailed = true
+        }
+
         let text = ReceiptRenderer.render(
             .init(
                 commandExecutable: commandExecutable,
                 termination: termination,
-                commandDuration: commandDuration,
+                commandDuration: duration,
                 scope: scope,
-                changes: changes
+                changes: changes,
+                savedReceiptId: savedId,
+                saveFailed: saveFailed
             )
         )
         receiptWriter.write(text)

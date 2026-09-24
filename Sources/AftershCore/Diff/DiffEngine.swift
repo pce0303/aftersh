@@ -1,6 +1,6 @@
 import Foundation
 
-public enum ChangeKind: String, Equatable, Sendable {
+public enum ChangeKind: String, Equatable, Sendable, Codable {
     case created
     case modified
     case deleted
@@ -14,7 +14,7 @@ public enum ChangeKind: String, Equatable, Sendable {
     }
 }
 
-public struct ObservedChange: Equatable, Sendable {
+public struct ObservedChange: Equatable, Sendable, Codable {
     public var kind: ChangeKind
     public var path: String
     public var before: FileMetadata?

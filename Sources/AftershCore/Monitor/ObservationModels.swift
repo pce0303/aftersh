@@ -3,7 +3,10 @@ import Foundation
 /// Where aftersh stores receipts and temporary scan data.
 public enum AftershPaths {
     public static var dataHome: URL {
-        FileManager.default.homeDirectoryForCurrentUser
+        // Prefer HOME so tests and wrappers can redirect storage.
+        let home = ProcessInfo.processInfo.environment["HOME"].flatMap { $0.isEmpty ? nil : $0 }
+            ?? NSHomeDirectory()
+        return URL(fileURLWithPath: home, isDirectory: true)
             .appendingPathComponent(".local/share/aftersh", isDirectory: true)
     }
 
@@ -16,14 +19,14 @@ public enum AftershPaths {
     }
 }
 
-public enum EntryType: String, Equatable, Sendable {
+public enum EntryType: String, Equatable, Sendable, Codable {
     case file
     case directory
     case symlink
     case other
 }
 
-public struct FileMetadata: Equatable, Sendable {
+public struct FileMetadata: Equatable, Sendable, Codable {
     public var path: String
     public var type: EntryType
     public var size: Int64
@@ -48,12 +51,12 @@ public struct FileMetadata: Equatable, Sendable {
     }
 }
 
-public enum ScanPhase: String, Equatable, Sendable {
+public enum ScanPhase: String, Equatable, Sendable, Codable {
     case before
     case after
 }
 
-public struct ScanFailure: Equatable, Sendable {
+public struct ScanFailure: Equatable, Sendable, Codable {
     public var path: String
     public var phase: ScanPhase
     public var operation: String
@@ -75,7 +78,7 @@ public struct ScanFailure: Equatable, Sendable {
     }
 }
 
-public struct SnapshotCoverage: Equatable, Sendable {
+public struct SnapshotCoverage: Equatable, Sendable, Codable {
     public var startedAt: Date
     public var endedAt: Date
     public var successfullyScannedPaths: [String]
@@ -105,7 +108,7 @@ public struct SnapshotCoverage: Equatable, Sendable {
     }
 }
 
-public enum ObservationStatus: String, Equatable, Sendable {
+public enum ObservationStatus: String, Equatable, Sendable, Codable {
     case complete
     case partial
     case failed
@@ -122,7 +125,7 @@ public enum ObservationStatus: String, Equatable, Sendable {
     }
 }
 
-public struct PathExclusion: Equatable, Sendable {
+public struct PathExclusion: Equatable, Sendable, Codable {
     public var path: String
     public var reason: String
 

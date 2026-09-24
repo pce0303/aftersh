@@ -1,6 +1,6 @@
 # aftersh Roadmap
 
-Status: Implementation in progress. Transparent execution, scoped snapshots, and receipt diff rendering are in place; persistence/history/inspect are next.
+Status: Implementation in progress. Transparent execution, snapshots, diff receipts, and persistence/history/inspect are in place; v0.1 release gate polish remains.
 
 ## v0.1 — Minimal Receipt
 
@@ -72,15 +72,15 @@ Acceptance: the new file is reported as CREATED, with complete coverage for the 
 
 ### 4. Persistence and retrieval
 
-- [ ] Versioned JSON receipt model and unique IDs
-- [ ] Atomic writes under ~/.local/share/aftersh/receipts/
-- [ ] Owner-only storage permissions
-- [ ] Omit argv values, environment, child output, and raw file contents from stored receipts
-- [ ] Explicit omitted-argument indicator in history/inspect
-- [ ] `af history`
-- [ ] `af inspect <id>` and `af inspect last`
-- [ ] Handle corrupt receipts, unknown schemas, ambiguous IDs, and concurrent runs
-- [ ] Report save failure separately from command status
+- [x] Versioned JSON receipt model and unique IDs
+- [x] Atomic writes under ~/.local/share/aftersh/receipts/
+- [x] Owner-only storage permissions
+- [x] Omit argv values, environment, child output, and raw file contents from stored receipts
+- [x] Explicit omitted-argument indicator in history/inspect
+- [x] `af history`
+- [x] `af inspect <id>` and `af inspect last`
+- [x] Handle corrupt receipts, unknown schemas, ambiguous IDs, and concurrent runs
+- [x] Report save failure separately from command status
 
 Acceptance: inspection after a new CLI invocation reproduces stored observations and coverage. Failed saves never produce a false `Receipt saved` message.
 

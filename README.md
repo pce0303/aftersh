@@ -4,7 +4,7 @@
 
 `aftersh` is a macOS CLI that turns changes observed around a shell command into a human-readable receipt.
 
-**Status: Implementation in progress.** Transparent execution, scoped snapshots, and CREATE/MODIFY/DELETE receipt rendering work; JSON persistence and `history`/`inspect` are next.
+**Status: Implementation in progress.** v0.1 core flow works end-to-end (run → snapshot → diff → save → history/inspect). Release-gate polish remains.
 
 ## Why aftersh?
 
@@ -77,7 +77,7 @@ Receipt saved
   <receipt-id>
 ```
 
-Persistence (`Receipt saved`, `af history`, `af inspect`) arrives in the next milestone; the live receipt currently ends with `Receipt not saved yet.`
+Receipts are written under `~/.local/share/aftersh/receipts/` (`0700` / `0600`). Use `af history` and `af inspect last` (or an id / unambiguous prefix) to reload them. A save failure is reported separately and never claims `Receipt saved`.
 
 `COMPLETE` means the selected, non-excluded scope was scanned successfully at both endpoints. It does not mean every system change was captured. Metadata comparison can miss content changes, and transient changes between snapshots may disappear.
 
@@ -105,7 +105,7 @@ af -w /tmp/aftersh-test -- echo hello | grep hello
 
 ## Privacy and persistence
 
-Receipts are planned under `~/.local/share/aftersh/receipts/` with schema versioning and restricted permissions. v0.1 stores metadata, not file contents, environment variables, or captured command output. Command arguments are omitted from persisted receipts by default because they can contain secrets.
+Receipts are stored under `~/.local/share/aftersh/receipts/` with schema versioning and restricted permissions. v0.1 stores metadata, not file contents, environment variables, or captured command output. Command arguments are omitted from persisted receipts by default because they can contain secrets.
 
 Future content comparisons will retain selected originals only temporarily and persist only sanitized summaries. A semantic summary can also contain secrets; it is not safe merely because it is shorter.
 

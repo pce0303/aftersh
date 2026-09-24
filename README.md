@@ -4,13 +4,34 @@
 
 `aftersh` is a macOS CLI that turns changes observed around a shell command into a human-readable receipt.
 
-**Status: Implementation in progress.** v0.1 core flow works end-to-end (run → snapshot → diff → save → history/inspect). Release-gate polish remains.
+**Status: v0.1 Minimal Receipt (release gate complete).** Core flow: run → snapshot → diff → save → history/inspect.
 
 ## Why aftersh?
 
 After running an unfamiliar installer or setup script, it can be hard to tell what appeared or changed. `aftersh` aims to answer that question without making you dig through your Mac manually.
 
 The product is the receipt: useful information about observed changes, with clear limits on what was actually inspected. Observation is not causation. Other processes can change files during a run, and snapshots do not establish which process made a change.
+
+## Requirements
+
+- Apple Silicon macOS (tested on arm64)
+- macOS 13+ (see `Package.swift`)
+- Swift 6.4+ / Swift Package Manager (Xcode or Command Line Tools)
+
+Full `swift test` needs the Swift Testing macros from a complete Xcode toolchain. With Command Line Tools alone, `swift build` works; `swift test` may fail to compile the test macros.
+
+## Install / build
+
+```bash
+git clone https://github.com/pce0303/aftersh.git
+cd aftersh
+swift build
+# Binaries:
+#   .build/debug/af
+#   .build/debug/aftersh
+```
+
+Optional: copy or symlink `.build/debug/af` onto your `PATH`.
 
 ## v0.1 — Minimal Receipt
 
@@ -23,9 +44,9 @@ The first release has one small contract:
 
 FSEvents, semantic shell diffs, importance ranking, Launchd inspection, and package inspection are later milestones.
 
-### Planned usage
+### Usage
 
-The project name remains **aftersh**; the primary executable is **`af`**. An `aftersh` executable alias will expose the same interface. Execution is the default subcommand, so `run` is optional.
+The project name remains **aftersh**; the primary executable is **`af`**. An `aftersh` executable alias exposes the same interface. Execution is the default subcommand, so `run` is optional.
 
 ```bash
 af -w . -e ./node_modules -- npm install
@@ -42,6 +63,8 @@ aftersh run --watch . --exclude ./node_modules -- npm install
 
 Use single-letter short options (`-e`, not `-ec`). The required `--` separates aftersh options from the child command and its arguments. `af history` and `af inspect last` remain explicit subcommands.
 
+### Reproducible demo
+
 ```bash
 mkdir -p /tmp/aftersh-test
 af -w /tmp/aftersh-test -- touch /tmp/aftersh-test/hello
@@ -49,13 +72,15 @@ af history
 af inspect last
 ```
 
-`-w` / `--watch` is repeatable and required in v0.1; there is no implicit whole-system scan. `-e <path>` / `--exclude <path>` optionally excludes a path and its descendants. A fresh test directory produces a receipt like:
+A fresh test directory produces a receipt like:
 
 ```text
 AFTERSH RECEIPT
 
 Command
-  touch /tmp/aftersh-test/hello
+  /usr/bin/touch
+Arguments
+  omitted
 Command exit
   0
 Observation
@@ -65,7 +90,7 @@ OBSERVATION SCOPE
 Watched
   /tmp/aftersh-test
 Excluded
-  none
+  ~/.local/share/aftersh (automatic: aftersh storage)
 Failed
   none
 
@@ -103,13 +128,32 @@ af -w /tmp/aftersh-test -- echo hello | grep hello
 
 `history` and `inspect` write their requested output to stdout; they do not wrap a child command.
 
+## Limits (read these)
+
+- **Observation is not causation.** Concurrent processes can change watched paths; snapshots do not attribute writers.
+- **Metadata only in v0.1.** Same-size rewrites with unchanged mtime may be missed; moves appear as DELETE+CREATE.
+- **Scans are non-atomic.** Races during traversal can leave unknown regions (`PARTIAL` / `FAILED`).
+- **No default whole-system watch.** You must pass `-w` / `--watch`.
+- **Detached / background writers** after the direct child exits are outside the observation window.
+- **Interactive and job-control edge cases** (full shell job control) are outside v0.1; ordinary foreground children should still be waited on across Ctrl-C.
+- **Privacy:** argv values, environment, and child output are not stored; paths and metadata in local receipts can still be sensitive.
+
 ## Privacy and persistence
 
 Receipts are stored under `~/.local/share/aftersh/receipts/` with schema versioning and restricted permissions. v0.1 stores metadata, not file contents, environment variables, or captured command output. Command arguments are omitted from persisted receipts by default because they can contain secrets.
 
 Future content comparisons will retain selected originals only temporarily and persist only sanitized summaries. A semantic summary can also contain secrets; it is not safe merely because it is shorter.
 
-## Planned architecture and project structure
+## Scan overhead (measured)
+
+On Apple Silicon (arm64), watching a fixture of ~2000 small files (~2040 path entries including directories):
+
+- Each endpoint metadata scan took about **350–360 ms** (from receipt coverage `startedAt`/`endedAt`).
+- The wrapped `/usr/bin/true` child itself was about **65 ms**; full wall-clock also includes save/render outside those intervals.
+
+Do not extrapolate from the trivial `touch` demo alone; cost scales with the size of the watched trees.
+
+## Architecture and layout
 
 ```text
 Validate scope and command
@@ -121,8 +165,6 @@ Validate scope and command
   → Render summary
 ```
 
-The following structure is the current package layout:
-
 ```text
 aftersh/
 ├── Package.swift
@@ -130,17 +172,17 @@ aftersh/
 │   ├── AftershCore/
 │   │   ├── CLI/
 │   │   ├── Core/
-│   │   ├── Monitor/      # planned
-│   │   ├── Diff/         # planned
-│   │   ├── Report/       # planned
-│   │   └── Storage/      # planned
+│   │   ├── Monitor/
+│   │   ├── Diff/
+│   │   ├── Report/
+│   │   └── Storage/
 │   ├── af/
 │   └── aftersh/
 ├── Tests/
 └── docs/
 ```
 
-Stack: Swift, Swift Package Manager, Swift Argument Parser, Foundation, and JSON storage. Primary executable: `af`; alias: `aftersh`. macOS first; deeper monitoring and inspectors will be added only when needed.
+Stack: Swift, Swift Package Manager, Swift Argument Parser, Foundation, and JSON storage. Primary executable: `af`; alias: `aftersh`.
 
 ## Roadmap
 

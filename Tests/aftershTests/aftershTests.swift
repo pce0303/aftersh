@@ -318,3 +318,21 @@ private func makeReceipt(id: String, endedAt: Date) -> Receipt {
         changes: []
     )
 }
+
+@Test func processRunnerEchoExitZero() throws {
+    let termination = try ProcessRunner().run(executable: "/bin/echo", arguments: ["hello"])
+    #expect(termination == .exited(0))
+}
+
+@Test func processRunnerNonzeroExit() throws {
+    let termination = try ProcessRunner().run(
+        executable: "/bin/sh",
+        arguments: ["-c", "exit 7"]
+    )
+    #expect(termination == .exited(7))
+    #expect(termination.wrapperExitCode == 7)
+}
+
+@Test func processRunnerSignaledWrapperExitCode() {
+    #expect(ProcessTermination.signaled(2).wrapperExitCode == 130)
+}

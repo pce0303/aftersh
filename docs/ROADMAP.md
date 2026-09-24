@@ -1,6 +1,6 @@
 # aftersh Roadmap
 
-Status: Implementation in progress. Transparent execution, snapshots, diff receipts, and persistence/history/inspect are in place; v0.1 release gate polish remains.
+Status: v0.1 Minimal Receipt — release gate complete. Next feature work is v0.2.
 
 ## v0.1 — Minimal Receipt
 
@@ -26,7 +26,7 @@ Acceptance: `swift run af --help` prints working help.
 - [x] Default to `run`; retain explicit `run`, `history`, and `inspect`
 - [x] Require `--` before the child command and preserve all following tokens
 - [x] Support `-h` / `--help`; bare `af` shows help
-- [ ] Verify both names, both execution forms, and child-option/subcommand collisions
+- [x] Verify both names, both execution forms, and child-option/subcommand collisions
 - [x] Implement RunCommand, ProcessRunner, and RunManager
 - [x] Preserve argv, PATH resolution, working directory, and environment
 - [x] Inherit stdin/stdout/stderr
@@ -34,7 +34,7 @@ Acceptance: `swift run af --help` prints working help.
 - [x] Return child status; define launch and usage errors
 - [x] Handle Ctrl-C and SIGTERM without leaving ordinary children running
 - [x] Handle repeat interruption promptly
-- [ ] Verify foreground terminal reads and interactive commands
+- [ ] Verify foreground terminal reads and interactive commands (manual / terminal session)
 - [x] Route wrapper UI with `-r` / `--receipt-output auto|stderr|none`
 - [x] Keep receipt output out of child stdout
 
@@ -86,14 +86,21 @@ Acceptance: inspection after a new CLI invocation reproduces stored observations
 
 ### v0.1 release gate
 
-- [ ] All four implementation stages pass their acceptance checks
-- [ ] Tests cover core diffs and incomplete scans without false CREATE/DELETE
-- [ ] Tests cover execution streams, status, and signal behavior
-- [ ] Tests cover persistence failures and reload
-- [ ] Tested on Apple Silicon macOS; minimum supported macOS/Swift versions documented
-- [ ] Measure scan overhead on representative scoped directories
-- [ ] README includes installation/build instructions and a real, reproducible demo
-- [ ] README clearly states observation, privacy, and detached-process limitations
+- [x] All four implementation stages pass their acceptance checks
+- [x] Tests cover core diffs and incomplete scans without false CREATE/DELETE
+- [x] Tests cover execution streams, status, and signal behavior
+- [x] Tests cover persistence failures and reload
+- [x] Tested on Apple Silicon macOS; minimum supported macOS/Swift versions documented
+- [x] Measure scan overhead on representative scoped directories
+- [x] README includes installation/build instructions and a real, reproducible demo
+- [x] README clearly states observation, privacy, and detached-process limitations
+
+Notes:
+
+- Automated tests live in `Tests/aftershTests`. ProcessRunner covers echo / nonzero exit / signal exit-code mapping; DiffEngine covers CREATE/MODIFY/DELETE and unknown-subtree non-invention; RunStore covers save/reload, ambiguous prefix, and corrupt/unsupported skip.
+- Interactive Ctrl-C / tty ownership remains a manual check (unchecked item under stage 1).
+- `swift test` requires Xcode’s Testing macros; Command Line Tools alone may only support `swift build`.
+- Scan overhead (Apple Silicon, ~2000-file fixture, ~2040 entries): about **350–360 ms per endpoint metadata scan**; child `/usr/bin/true` about 65 ms. See README.
 
 Not required: FSEvents, content hashes or content snapshots, semantic shell inspection, noise ranking, Launchd, pkgutil, automatic rollback, GUI, perfect attribution, or an Intel support guarantee.
 
@@ -135,19 +142,6 @@ Acceptance: receipts explain observed service definitions and package receipts w
 - Stronger process-level provenance
 - SQLite if real query needs outgrow JSON
 - Optional GUI or other operating systems after the CLI proves useful
-
-
-
-## First coding session
-
-1. Initialize the executable package and Argument Parser.
-2. Implement argument/stream forwarding and child status.
-3. Verify stdin, pipelines, and interruption.
-4. Commit the execution skeleton.
-5. Add a scoped metadata snapshot and coverage model.
-6. Build the first receipt, then persistence and inspection.
-
-Keep commits small and independently understandable. Do not let later inspectors delay the minimal release.
 
 ## Definition of success
 

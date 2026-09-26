@@ -22,6 +22,13 @@ struct RunCommand: ParsableCommand {
     var exclude: [String] = []
 
     @Option(
+        name: [.long],
+        parsing: .singleValue,
+        help: "File for bounded text comparison; repeatable. Must be under a --watch root. Max \(ContentCapture.maxBytes) bytes."
+    )
+    var content: [String] = []
+
+    @Option(
         name: [.customShort("r"), .long],
         help: "Where to print the receipt summary: auto, stderr, or none."
     )
@@ -59,7 +66,8 @@ struct RunCommand: ParsableCommand {
         let code = manager.run(
             command: command,
             watchPaths: watch,
-            excludePaths: exclude
+            excludePaths: exclude,
+            contentPaths: content
         )
         throw ExitCode(code)
     }

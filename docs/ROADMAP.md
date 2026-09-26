@@ -1,6 +1,6 @@
 # aftersh Roadmap
 
-Status: v0.1 Minimal Receipt — release gate complete. Next feature work is v0.2.
+Status: v0.2 Useful Receipt — first slice in progress (selected `--content` + literal PATH summaries).
 
 ## v0.1 — Minimal Receipt
 
@@ -108,15 +108,15 @@ Not required: FSEvents, content hashes or content snapshots, semantic shell insp
 
 Goal: explain meaningful changes without overwhelming the reader.
 
-- [ ] Implement explicitly selected hashed/content snapshot strategies
-- [ ] Capture original hashes/content before command execution
-- [ ] Define content size limits and fallback behavior
-- [ ] Separate temporary comparison data from persistent receipt models
-- [ ] Clean up temporary originals on normal completion and handled failures
-- [ ] Persist only sanitized semantic summaries; omit sensitive values
-- [ ] Recognize conservative shell patterns, starting with literal PATH changes
+- [x] Implement explicitly selected content snapshot strategies (`--content`; hashed strategy deferred)
+- [x] Capture original content before command execution
+- [x] Define content size limits and fallback behavior (64 KiB)
+- [x] Separate temporary comparison data from persistent receipt models
+- [x] Clean up temporary originals on normal completion and handled failures (in-memory only)
+- [x] Persist only sanitized semantic summaries; omit sensitive values
+- [x] Recognize conservative shell patterns, starting with literal PATH changes
 - [ ] Add importance ranking and noise filtering
-- [ ] Preserve access to underlying metadata observations
+- [x] Preserve access to underlying metadata observations
 
 Demo: a controlled shell-config fixture changes a literal PATH value from `/old` to `/old:/new`; the receipt explains the addition of `/new`. Unsupported shell expressions remain generic modifications.
 

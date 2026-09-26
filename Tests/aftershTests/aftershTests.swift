@@ -423,3 +423,215 @@ private func makeReceipt(id: String, endedAt: Date) -> Receipt {
 @Test func processRunnerSignaledWrapperExitCode() {
     #expect(ProcessTermination.signaled(2).wrapperExitCode == 130)
 }
+
+@Test func contentCaptureRejectsOutsideWatch() {
+    let watched = [
+        NormalizedPath(display: "/tmp/watch", canonical: "/tmp/watch")
+    ]
+    let result = ContentCapture.validateSelections(
+        contentPaths: ["/tmp/other/.zshrc"],
+        watched: watched,
+        workingDirectory: "/tmp"
+    )
+    guard case .failure(let error) = result else {
+        Issue.record("expected selection failure")
+        return
+    }
+    #expect(error.message.contains("under a --watch root"))
+}
+
+@Test func contentCaptureAcceptsUnderWatch() {
+    let watched = [
+        PathNormalizer.normalize("/tmp/watch", workingDirectory: "/tmp")
+    ]
+    let result = ContentCapture.validateSelections(
+        contentPaths: ["/tmp/watch/.zshrc"],
+        watched: watched,
+        workingDirectory: "/tmp"
+    )
+    guard case .success(let paths) = result else {
+        Issue.record("expected selection success")
+        return
+    }
+    #expect(paths.count == 1)
+    #expect(paths[0].display.hasSuffix("/.zshrc"))
+}
+
+@Test func pathSemanticDiffDetectsAddedEntry() {
+    let before = "export PATH=/old\n"
+    let after = "export PATH=/old:/new\n"
+    let summaries = PathSemanticDiff.summarize(
+        beforeText: before,
+        afterText: after,
+        displayPath: "/tmp/fixture/.zshrc"
+    )
+    #expect(summaries.count == 1)
+    #expect(summaries[0].kind == "path_entry_added")
+    #expect(summaries[0].message == "PATH entry added: /new")
+    #expect(summaries[0].path == "/tmp/fixture/.zshrc")
+}
+
+@Test func pathSemanticDiffDetectsRemovedEntry() {
+    let summaries = PathSemanticDiff.summarize(
+        beforeText: "PATH=/old:/gone\n",
+        afterText: "PATH=/old\n",
+        displayPath: "/tmp/x"
+    )
+    #expect(summaries.map(\.message) == ["PATH entry removed: /gone"])
+}
+
+@Test func pathSemanticDiffIgnoresNonLiteralShell() {
+    let summaries = PathSemanticDiff.summarize(
+        beforeText: "PATH=$HOME/bin:$PATH\n",
+        afterText: "PATH=$HOME/bin:$PATH:/extra\n",
+        displayPath: "/tmp/x"
+    )
+    // Still literal PATH= lines — entries compared as opaque strings including $HOME.
+    #expect(summaries.contains { $0.message == "PATH entry added: /extra" })
+}
+
+@Test func receiptSummaryShowsPathEntryWithoutRawDump() {
+    let path = "/tmp/fixture/.zshrc"
+    let summary = ReceiptRenderer.render(
+        .init(
+            commandExecutable: "/bin/sh",
+            termination: .exited(0),
+            scopeStatus: .complete,
+            watchedPaths: ["/tmp/fixture"],
+            excludedPaths: [],
+            failures: [],
+            changes: [
+                ObservedChange(
+                    kind: .modified,
+                    path: path,
+                    before: meta(path, size: 20),
+                    after: meta(path, size: 28)
+                )
+            ],
+            semanticSummaries: [
+                SemanticSummary(
+                    kind: "path_entry_added",
+                    message: "PATH entry added: /new",
+                    path: path
+                )
+            ],
+            savedReceiptId: "demo-id",
+            verbosity: .summary
+        )
+    )
+    #expect(summary.contains("PATH entry added: /new"))
+    #expect(!summary.contains("MODIFIED"))
+    #expect(!summary.contains("export PATH"))
+    #expect(!summary.contains("/old:/new"))
+}
+
+@Test func receiptOmitsRawContentFromJSON() throws {
+    let receipt = Receipt(
+        id: "sem-0001",
+        commandExecutable: "/bin/sh",
+        startedAt: Date(timeIntervalSince1970: 1),
+        endedAt: Date(timeIntervalSince1970: 2),
+        commandDuration: 1,
+        termination: .exited(0),
+        observation: PersistedObservation(
+            watchedPaths: ["/tmp/fixture"],
+            excludedPaths: [],
+            status: .complete,
+            beforeCoverage: SnapshotCoverage(successfullyScannedPaths: ["/tmp/fixture"]),
+            afterCoverage: SnapshotCoverage(successfullyScannedPaths: ["/tmp/fixture"]),
+            failures: []
+        ),
+        changes: [],
+        semanticSummaries: [
+            SemanticSummary(
+                kind: "path_entry_added",
+                message: "PATH entry added: /new",
+                path: "/tmp/fixture/.zshrc"
+            )
+        ]
+    )
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    let data = try encoder.encode(receipt)
+    let json = String(decoding: data, as: UTF8.self)
+    #expect(json.contains("path_entry_added"))
+    #expect(json.contains("PATH entry added:"))
+    #expect(json.contains("semanticSummaries"))
+    #expect(!json.contains("export PATH"))
+    #expect(!json.contains("/old:/new"))
+    #expect(!json.contains("\"text\""))
+
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let decoded = try decoder.decode(Receipt.self, from: data)
+    #expect(decoded.semanticSummaries.map(\.message) == ["PATH entry added: /new"])
+}
+
+@Test func contentCaptureOversizedFallsBack() throws {
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory.appendingPathComponent(
+        "aftersh-content-\(UUID().uuidString)"
+    )
+    try fm.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: root) }
+
+    let file = root.appendingPathComponent("big.txt")
+    let payload = Data(repeating: UInt8(ascii: "a"), count: ContentCapture.maxBytes + 1)
+    try payload.write(to: file)
+
+    let normalized = PathNormalizer.normalize(file.path, workingDirectory: root.path)
+    let snap = ContentCapture.capture(path: normalized, fileManager: fm)
+    #expect(snap.text == nil)
+    #expect(snap.limitation?.contains("exceeds") == true)
+}
+
+@Test func endToEndLiteralPathFixture() throws {
+    let fm = FileManager.default
+    let fixture = fm.temporaryDirectory.appendingPathComponent(
+        "aftersh-v02-\(UUID().uuidString)"
+    )
+    try fm.createDirectory(at: fixture, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: fixture) }
+
+    let zshrc = fixture.appendingPathComponent(".zshrc")
+    try "export PATH=/old\n".write(to: zshrc, atomically: true, encoding: .utf8)
+
+    let storeDir = fm.temporaryDirectory.appendingPathComponent(
+        "aftersh-v02-store-\(UUID().uuidString)"
+    )
+    try fm.createDirectory(at: storeDir, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: storeDir) }
+
+    let manager = RunManager(
+        processRunner: ProcessRunner(),
+        receiptWriter: ReceiptWriter(mode: .none),
+        runStore: RunStore(directory: storeDir, fileManager: fm),
+        verbosity: .summary
+    )
+
+    let code = manager.run(
+        command: [
+            "/bin/sh", "-c",
+            "printf 'export PATH=/old:/new\\n' > \"$1\"",
+            "sh",
+            zshrc.path,
+        ],
+        watchPaths: [fixture.path],
+        excludePaths: [],
+        contentPaths: [zshrc.path]
+    )
+    #expect(code == 0)
+
+    let receipts = RunStore(directory: storeDir, fileManager: fm).list(emitDiagnostics: false)
+    #expect(receipts.count == 1)
+    let receipt = receipts[0]
+    #expect(receipt.semanticSummaries.contains {
+        $0.message == "PATH entry added: /new"
+    })
+
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    let json = String(decoding: try encoder.encode(receipt), as: UTF8.self)
+    #expect(!json.contains("export PATH=/old:/new"))
+    #expect(!json.contains("\"text\""))
+}

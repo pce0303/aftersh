@@ -57,6 +57,7 @@ aftersh run --watch . --exclude ./node_modules -- npm install
 | Short | Long | Purpose |
 | --- | --- | --- |
 | `-w` | `--watch` | Watch a path; repeatable |
+| | `--content` | Compare a file’s text (bounded); must be under a watch root; repeatable |
 | `-e` | `--exclude` | Exclude a path; repeatable |
 | `-r` | `--receipt-output` | Choose auto, stderr, or none |
 | `-v` | `--verbose` | Print the full detailed receipt after the run |
@@ -71,6 +72,14 @@ mkdir -p /tmp/aftersh-test
 af -w /tmp/aftersh-test -- touch /tmp/aftersh-test/hello
 af history
 af inspect last
+
+# Selected-file content + literal PATH summary (v0.2)
+FIXTURE=/tmp/aftersh-v02-fixture
+mkdir -p "$FIXTURE"
+printf 'export PATH=/old\n' > "$FIXTURE/.zshrc"
+af -w "$FIXTURE" --content "$FIXTURE/.zshrc" -- \
+  sh -c 'printf "export PATH=/old:/new\n" > "$0/.zshrc"' "$FIXTURE"
+# Summary includes: PATH entry added: /new
 ```
 
 By default the live receipt is a **short summary**. Full scope, limits, and low-signal directory metadata changes are in `af inspect last` (or pass `-v` on the run).
@@ -130,7 +139,7 @@ af -w /tmp/aftersh-test -- echo hello | grep hello
 
 Receipts are stored under `~/.local/share/aftersh/receipts/` with schema versioning and restricted permissions. v0.1 stores metadata, not file contents, environment variables, or captured command output. Command arguments are omitted from persisted receipts by default because they can contain secrets.
 
-Future content comparisons will retain selected originals only temporarily and persist only sanitized summaries. A semantic summary can also contain secrets; it is not safe merely because it is shorter.
+Selected `--content` files are compared in memory (64 KiB limit); only sanitized semantic summaries (e.g. `PATH entry added: /new`) are persisted — never raw file bodies. A semantic summary can still contain secrets; it is not safe merely because it is shorter.
 
 ## Scan overhead (measured)
 

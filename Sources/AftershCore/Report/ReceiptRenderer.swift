@@ -19,6 +19,8 @@ public enum ReceiptRenderer {
         public var excludedPaths: [PathExclusion]
         public var failures: [ScanFailure]
         public var changes: [ObservedChange]
+        public var semanticSummaries: [SemanticSummary]
+        public var contentLimitations: [String]
         public var savedReceiptId: String?
         public var saveFailed: Bool
         public var verbosity: ReceiptVerbosity
@@ -33,6 +35,8 @@ public enum ReceiptRenderer {
             excludedPaths: [PathExclusion],
             failures: [ScanFailure],
             changes: [ObservedChange],
+            semanticSummaries: [SemanticSummary] = [],
+            contentLimitations: [String] = [],
             savedReceiptId: String? = nil,
             saveFailed: Bool = false,
             verbosity: ReceiptVerbosity = .detailed
@@ -46,6 +50,8 @@ public enum ReceiptRenderer {
             self.excludedPaths = excludedPaths
             self.failures = failures
             self.changes = changes
+            self.semanticSummaries = semanticSummaries
+            self.contentLimitations = contentLimitations
             self.savedReceiptId = savedReceiptId
             self.saveFailed = saveFailed
             self.verbosity = verbosity
@@ -57,6 +63,8 @@ public enum ReceiptRenderer {
             commandDuration: TimeInterval? = nil,
             scope: ObservationScope,
             changes: [ObservedChange],
+            semanticSummaries: [SemanticSummary] = [],
+            contentLimitations: [String] = [],
             savedReceiptId: String? = nil,
             saveFailed: Bool = false,
             verbosity: ReceiptVerbosity = .detailed
@@ -71,6 +79,8 @@ public enum ReceiptRenderer {
                 excludedPaths: scope.excludedPaths,
                 failures: scope.failures,
                 changes: changes,
+                semanticSummaries: semanticSummaries,
+                contentLimitations: contentLimitations,
                 savedReceiptId: savedReceiptId,
                 saveFailed: saveFailed,
                 verbosity: verbosity
@@ -117,6 +127,8 @@ public enum ReceiptRenderer {
                 excludedPaths: receipt.observation.excludedPaths,
                 failures: receipt.observation.failures,
                 changes: receipt.changes,
+                semanticSummaries: receipt.semanticSummaries,
+                contentLimitations: receipt.contentLimitations,
                 savedReceiptId: receipt.id,
                 saveFailed: false,
                 verbosity: verbosity
@@ -163,7 +175,17 @@ public enum ReceiptRenderer {
         }
         lines.append("")
 
-        let notable = input.changes.filter { !isDirectoryMetadataOnlyModify($0) }
+        appendSemanticSection(&lines, summaries: input.semanticSummaries, title: nil)
+
+        let coveredPaths = Set(input.semanticSummaries.map(\.path))
+        let notable = input.changes.filter { change in
+            if isDirectoryMetadataOnlyModify(change) { return false }
+            // When a semantic summary already explains the file, omit redundant MODIFIED.
+            if change.kind == .modified, coveredPaths.contains(change.path) {
+                return false
+            }
+            return true
+        }
         let collapsedDirs = input.changes.filter { isDirectoryMetadataOnlyModify($0) }.count
 
         if input.scopeStatus == .failed {
@@ -184,10 +206,14 @@ public enum ReceiptRenderer {
             }
             lines.append("")
             appendChangeGroups(&lines, changes: notable, emptyMessage: nil)
-            if notable.isEmpty, collapsedDirs == 0, input.scopeStatus != .failed {
+            if notable.isEmpty,
+               collapsedDirs == 0,
+               input.semanticSummaries.isEmpty,
+               input.scopeStatus != .failed
+            {
                 lines.append("No changes detected in successfully observed paths.")
             }
-        } else if notable.isEmpty {
+        } else if notable.isEmpty, input.semanticSummaries.isEmpty {
             if collapsedDirs > 0 {
                 lines.append(
                     "No notable changes (+\(collapsedDirs) directory metadata — af inspect last)"
@@ -201,6 +227,19 @@ public enum ReceiptRenderer {
                 lines.append("")
                 lines.append(
                     "(+\(collapsedDirs) directory metadata — af inspect last)"
+                )
+            }
+        }
+
+        if !input.contentLimitations.isEmpty {
+            lines.append("")
+            lines.append("Content limits")
+            for limitation in input.contentLimitations.prefix(3) {
+                lines.append("  \(limitation)")
+            }
+            if input.contentLimitations.count > 3 {
+                lines.append(
+                    "  … +\(input.contentLimitations.count - 3) more (af inspect)"
                 )
             }
         }
@@ -267,14 +306,30 @@ public enum ReceiptRenderer {
         }
         lines.append("")
 
+        if !input.semanticSummaries.isEmpty {
+            lines.append("Semantic summaries")
+            for summary in input.semanticSummaries {
+                lines.append("  \(summary.message)  (\(summary.path))")
+            }
+            lines.append("")
+        }
+
         lines.append("Observed between snapshots")
         appendChangesDetailed(&lines, status: input.scopeStatus, changes: input.changes)
         lines.append("")
 
         lines.append("Limits")
         lines.append(
-            "  Metadata comparison only; scans are non-atomic. Observation is not causation."
+            "  Metadata comparison; optional selected-file content (max \(ContentCapture.maxBytes) bytes)."
         )
+        lines.append(
+            "  Scans are non-atomic. Observation is not causation."
+        )
+        if !input.contentLimitations.isEmpty {
+            for limitation in input.contentLimitations {
+                lines.append("  \(limitation)")
+            }
+        }
         lines.append("")
 
         appendSaveFooter(&lines, input: input)
@@ -282,6 +337,21 @@ public enum ReceiptRenderer {
     }
 
     // MARK: - Shared helpers
+
+    private static func appendSemanticSection(
+        _ lines: inout [String],
+        summaries: [SemanticSummary],
+        title: String?
+    ) {
+        guard !summaries.isEmpty else { return }
+        if let title {
+            lines.append(title)
+        }
+        for summary in summaries {
+            lines.append(summary.message)
+        }
+        lines.append("")
+    }
 
     private static func appendSaveFooter(_ lines: inout [String], input: Input) {
         if let id = input.savedReceiptId {

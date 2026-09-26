@@ -26,7 +26,8 @@ struct RunManager: Sendable {
     func run(
         command: [String],
         watchPaths: [String],
-        excludePaths: [String]
+        excludePaths: [String],
+        contentPaths: [String] = []
     ) -> Int32 {
         guard let executableName = command.first else {
             DiagnosticWriter.error("error: a child command is required after --.")
@@ -40,6 +41,18 @@ struct RunManager: Sendable {
         )
         guard !prepared.watched.isEmpty else {
             DiagnosticWriter.error("error: at least one --watch / -w path is required.")
+            return 2
+        }
+
+        let contentSelections: [NormalizedPath]
+        switch ContentCapture.validateSelections(
+            contentPaths: contentPaths,
+            watched: prepared.watched
+        ) {
+        case .success(let paths):
+            contentSelections = paths
+        case .failure(let error):
+            DiagnosticWriter.error("error: \(error.path): \(error.message)")
             return 2
         }
 
@@ -64,6 +77,13 @@ struct RunManager: Sendable {
             phase: .before
         )
 
+        // Capture originals before the child runs; required for content/semantic diffs.
+        var beforeContent: [String: ContentCapture.Snapshot] = [:]
+        for selection in contentSelections {
+            let snap = ContentCapture.capture(path: selection)
+            beforeContent[selection.canonical] = snap
+        }
+
         let startedAt = Date()
         let termination: ProcessTermination
         do {
@@ -76,14 +96,16 @@ struct RunManager: Sendable {
                 phase: .after
             )
             let scope = makeScope(prepared: prepared, before: before, after: after)
-            // Command never launched successfully; still show observation, do not claim a run receipt.
             writeReceipt(
                 scope: scope,
                 commandExecutable: resolved,
                 termination: nil,
                 startedAt: startedAt,
                 endedAt: endedAt,
-                persist: false
+                persist: false,
+                beforeContent: beforeContent,
+                afterContent: [:],
+                contentSelections: contentSelections
             )
             return launchExitCode(error)
         } catch {
@@ -97,6 +119,12 @@ struct RunManager: Sendable {
             excludeCanonical: prepared.excludeCanonical,
             phase: .after
         )
+
+        var afterContent: [String: ContentCapture.Snapshot] = [:]
+        for selection in contentSelections {
+            afterContent[selection.canonical] = ContentCapture.capture(path: selection)
+        }
+
         let scope = makeScope(prepared: prepared, before: before, after: after)
         writeReceipt(
             scope: scope,
@@ -104,7 +132,10 @@ struct RunManager: Sendable {
             termination: termination,
             startedAt: startedAt,
             endedAt: endedAt,
-            persist: true
+            persist: true,
+            beforeContent: beforeContent,
+            afterContent: afterContent,
+            contentSelections: contentSelections
         )
 
         return termination.wrapperExitCode
@@ -145,11 +176,36 @@ struct RunManager: Sendable {
         termination: ProcessTermination?,
         startedAt: Date,
         endedAt: Date,
-        persist: Bool
+        persist: Bool,
+        beforeContent: [String: ContentCapture.Snapshot],
+        afterContent: [String: ContentCapture.Snapshot],
+        contentSelections: [NormalizedPath]
     ) {
         let changes = DiffEngine.diff(before: scope.before, after: scope.after)
         let duration = endedAt.timeIntervalSince(startedAt)
 
+        var semanticSummaries: [SemanticSummary] = []
+        var contentLimitations: [String] = []
+
+        for selection in contentSelections {
+            let beforeSnap = beforeContent[selection.canonical]
+            let afterSnap = afterContent[selection.canonical]
+            if let limitation = beforeSnap?.limitation {
+                contentLimitations.append("\(selection.display) (before): \(limitation)")
+            }
+            if let limitation = afterSnap?.limitation {
+                contentLimitations.append("\(selection.display) (after): \(limitation)")
+            }
+            semanticSummaries.append(
+                contentsOf: PathSemanticDiff.summarize(
+                    beforeText: beforeSnap?.text,
+                    afterText: afterSnap?.text,
+                    displayPath: selection.display
+                )
+            )
+        }
+
+        // Raw content stays only in local dictionaries above; do not copy into Receipt.
         var savedId: String?
         var saveFailed = false
 
@@ -163,6 +219,8 @@ struct RunManager: Sendable {
                 termination: termination,
                 observation: PersistedObservation(scope: scope),
                 changes: changes,
+                semanticSummaries: semanticSummaries,
+                contentLimitations: contentLimitations,
                 interrupted: false
             )
             do {
@@ -185,6 +243,8 @@ struct RunManager: Sendable {
                 commandDuration: duration,
                 scope: scope,
                 changes: changes,
+                semanticSummaries: semanticSummaries,
+                contentLimitations: contentLimitations,
                 savedReceiptId: savedId,
                 saveFailed: saveFailed,
                 verbosity: verbosity

@@ -1,5 +1,12 @@
 import Foundation
 
+public enum ReceiptVerbosity: String, Sendable {
+    /// Short post-run output: status, exit, notable changes, save id.
+    case summary
+    /// Full trust-oriented receipt for `inspect` / `--verbose`.
+    case detailed
+}
+
 /// Renders a human-readable receipt from observation results.
 public enum ReceiptRenderer {
     public struct Input: Sendable {
@@ -14,6 +21,7 @@ public enum ReceiptRenderer {
         public var changes: [ObservedChange]
         public var savedReceiptId: String?
         public var saveFailed: Bool
+        public var verbosity: ReceiptVerbosity
 
         public init(
             commandExecutable: String,
@@ -26,7 +34,8 @@ public enum ReceiptRenderer {
             failures: [ScanFailure],
             changes: [ObservedChange],
             savedReceiptId: String? = nil,
-            saveFailed: Bool = false
+            saveFailed: Bool = false,
+            verbosity: ReceiptVerbosity = .detailed
         ) {
             self.commandExecutable = commandExecutable
             self.argumentsOmitted = argumentsOmitted
@@ -39,6 +48,7 @@ public enum ReceiptRenderer {
             self.changes = changes
             self.savedReceiptId = savedReceiptId
             self.saveFailed = saveFailed
+            self.verbosity = verbosity
         }
 
         public init(
@@ -48,7 +58,8 @@ public enum ReceiptRenderer {
             scope: ObservationScope,
             changes: [ObservedChange],
             savedReceiptId: String? = nil,
-            saveFailed: Bool = false
+            saveFailed: Bool = false,
+            verbosity: ReceiptVerbosity = .detailed
         ) {
             self.init(
                 commandExecutable: commandExecutable,
@@ -61,12 +72,147 @@ public enum ReceiptRenderer {
                 failures: scope.failures,
                 changes: changes,
                 savedReceiptId: savedReceiptId,
-                saveFailed: saveFailed
+                saveFailed: saveFailed,
+                verbosity: verbosity
             )
         }
     }
 
+    /// Directory MODIFY with no permission/symlink change — common noise next to CREATE/DELETE
+    /// (mtime and directory size often change when children are added).
+    public static func isDirectoryMetadataOnlyModify(_ change: ObservedChange) -> Bool {
+        guard change.kind == .modified,
+              let before = change.before,
+              let after = change.after,
+              before.type == .directory,
+              after.type == .directory
+        else {
+            return false
+        }
+        return before.permissions == after.permissions
+            && before.symlinkTarget == after.symlinkTarget
+    }
+
     public static func render(_ input: Input) -> String {
+        switch input.verbosity {
+        case .summary:
+            return renderSummary(input)
+        case .detailed:
+            return renderDetailed(input)
+        }
+    }
+
+    public static func render(
+        receipt: Receipt,
+        verbosity: ReceiptVerbosity = .detailed
+    ) -> String {
+        render(
+            .init(
+                commandExecutable: receipt.commandExecutable,
+                argumentsOmitted: receipt.argumentsOmitted,
+                termination: receipt.termination,
+                commandDuration: receipt.commandDuration,
+                scopeStatus: receipt.observation.status,
+                watchedPaths: receipt.observation.watchedPaths,
+                excludedPaths: receipt.observation.excludedPaths,
+                failures: receipt.observation.failures,
+                changes: receipt.changes,
+                savedReceiptId: receipt.id,
+                saveFailed: false,
+                verbosity: verbosity
+            )
+        )
+    }
+
+    public static func renderHistory(_ receipts: [Receipt]) -> String {
+        if receipts.isEmpty {
+            return "No saved receipts."
+        }
+
+        var lines: [String] = []
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+
+        for receipt in receipts {
+            let ended = formatter.string(from: receipt.endedAt)
+            let status = receipt.observation.status.rawValue.uppercased()
+            let args = receipt.argumentsOmitted ? "args omitted" : "args recorded"
+            lines.append(
+                "\(receipt.id)  \(ended)  \(status)  changes=\(receipt.changes.count)  \(receipt.commandExecutable)  (\(args))"
+            )
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    // MARK: - Summary
+
+    private static func renderSummary(_ input: Input) -> String {
+        var lines: [String] = []
+        lines.append("AFTERSH")
+        lines.append("Observation  \(input.scopeStatus.rawValue.uppercased())")
+        lines.append("Command      \(input.commandExecutable)")
+        if let termination = input.termination {
+            switch termination {
+            case .exited(let code):
+                lines.append("Exit         \(code)")
+            case .signaled(let signal):
+                lines.append(
+                    "Signal       \(signal) (wrapper exit \(termination.wrapperExitCode))"
+                )
+            }
+        }
+        lines.append("")
+
+        let notable = input.changes.filter { !isDirectoryMetadataOnlyModify($0) }
+        let collapsedDirs = input.changes.filter { isDirectoryMetadataOnlyModify($0) }.count
+
+        if input.scopeStatus == .failed {
+            lines.append("Changes could not be determined: no comparable observation coverage.")
+        } else if !input.failures.isEmpty || input.scopeStatus == .partial {
+            lines.append("Failed")
+            if input.failures.isEmpty {
+                lines.append("  (partial coverage; details in af inspect)")
+            } else {
+                for failure in input.failures.prefix(5) {
+                    lines.append(
+                        "  [\(failure.phase.rawValue)] \(failure.path): \(failure.operation)"
+                    )
+                }
+                if input.failures.count > 5 {
+                    lines.append("  … +\(input.failures.count - 5) more (af inspect)")
+                }
+            }
+            lines.append("")
+            appendChangeGroups(&lines, changes: notable, emptyMessage: nil)
+            if notable.isEmpty, collapsedDirs == 0, input.scopeStatus != .failed {
+                lines.append("No changes detected in successfully observed paths.")
+            }
+        } else if notable.isEmpty {
+            if collapsedDirs > 0 {
+                lines.append(
+                    "No notable changes (+\(collapsedDirs) directory metadata — af inspect last)"
+                )
+            } else {
+                lines.append("No changes detected in successfully observed paths.")
+            }
+        } else {
+            appendChangeGroups(&lines, changes: notable, emptyMessage: nil)
+            if collapsedDirs > 0 {
+                lines.append("")
+                lines.append(
+                    "(+\(collapsedDirs) directory metadata — af inspect last)"
+                )
+            }
+        }
+
+        lines.append("")
+        appendSaveFooter(&lines, input: input)
+        return lines.joined(separator: "\n")
+    }
+
+    // MARK: - Detailed
+
+    private static func renderDetailed(_ input: Input) -> String {
         var lines: [String] = []
         lines.append("AFTERSH RECEIPT")
         lines.append("")
@@ -122,7 +268,7 @@ public enum ReceiptRenderer {
         lines.append("")
 
         lines.append("Observed between snapshots")
-        appendChanges(&lines, status: input.scopeStatus, changes: input.changes)
+        appendChangesDetailed(&lines, status: input.scopeStatus, changes: input.changes)
         lines.append("")
 
         lines.append("Limits")
@@ -131,54 +277,19 @@ public enum ReceiptRenderer {
         )
         lines.append("")
 
+        appendSaveFooter(&lines, input: input)
+        return lines.joined(separator: "\n")
+    }
+
+    // MARK: - Shared helpers
+
+    private static func appendSaveFooter(_ lines: inout [String], input: Input) {
         if let id = input.savedReceiptId {
             lines.append("Receipt saved")
             lines.append("  \(id)")
-        } else if input.saveFailed {
-            lines.append("Receipt not saved.")
         } else {
             lines.append("Receipt not saved.")
         }
-
-        return lines.joined(separator: "\n")
-    }
-
-    public static func render(receipt: Receipt) -> String {
-        render(
-            .init(
-                commandExecutable: receipt.commandExecutable,
-                argumentsOmitted: receipt.argumentsOmitted,
-                termination: receipt.termination,
-                commandDuration: receipt.commandDuration,
-                scopeStatus: receipt.observation.status,
-                watchedPaths: receipt.observation.watchedPaths,
-                excludedPaths: receipt.observation.excludedPaths,
-                failures: receipt.observation.failures,
-                changes: receipt.changes,
-                savedReceiptId: receipt.id,
-                saveFailed: false
-            )
-        )
-    }
-
-    public static func renderHistory(_ receipts: [Receipt]) -> String {
-        if receipts.isEmpty {
-            return "No saved receipts."
-        }
-
-        var lines: [String] = []
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-
-        for receipt in receipts {
-            let ended = formatter.string(from: receipt.endedAt)
-            let status = receipt.observation.status.rawValue.uppercased()
-            let args = receipt.argumentsOmitted ? "args omitted" : "args recorded"
-            lines.append(
-                "\(receipt.id)  \(ended)  \(status)  changes=\(receipt.changes.count)  \(receipt.commandExecutable)  (\(args))"
-            )
-        }
-        return lines.joined(separator: "\n")
     }
 
     private static func appendPathList(_ lines: inout [String], _ paths: [String]) {
@@ -191,7 +302,7 @@ public enum ReceiptRenderer {
         }
     }
 
-    private static func appendChanges(
+    private static func appendChangesDetailed(
         _ lines: inout [String],
         status: ObservationStatus,
         changes: [ObservedChange]
@@ -200,16 +311,27 @@ public enum ReceiptRenderer {
             lines.append("  Changes could not be determined: no comparable observation coverage.")
             return
         }
-
         if changes.isEmpty {
             lines.append("  No changes detected in successfully observed paths.")
             return
         }
+        appendChangeGroups(&lines, changes: changes, emptyMessage: nil)
+    }
 
+    private static func appendChangeGroups(
+        _ lines: inout [String],
+        changes: [ObservedChange],
+        emptyMessage: String?
+    ) {
+        if changes.isEmpty {
+            if let emptyMessage {
+                lines.append(emptyMessage)
+            }
+            return
+        }
         let created = changes.filter { $0.kind == .created }
         let modified = changes.filter { $0.kind == .modified }
         let deleted = changes.filter { $0.kind == .deleted }
-
         appendChangeGroup(&lines, title: "CREATED", changes: created)
         appendChangeGroup(&lines, title: "MODIFIED", changes: modified)
         appendChangeGroup(&lines, title: "DELETED", changes: deleted)

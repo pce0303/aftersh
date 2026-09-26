@@ -14,7 +14,7 @@ struct InspectCommand: ParsableCommand {
         let store = RunStore()
         do {
             let receipt = try store.load(idOrPrefix: id)
-            print(ReceiptRenderer.render(receipt: receipt))
+            print(ReceiptRenderer.render(receipt: receipt, verbosity: .detailed))
         } catch let error as RunStoreError {
             DiagnosticWriter.error("error: \(error.localizedDescription)")
             throw ExitCode(2)

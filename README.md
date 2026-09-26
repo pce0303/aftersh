@@ -59,6 +59,7 @@ aftersh run --watch . --exclude ./node_modules -- npm install
 | `-w` | `--watch` | Watch a path; repeatable |
 | `-e` | `--exclude` | Exclude a path; repeatable |
 | `-r` | `--receipt-output` | Choose auto, stderr, or none |
+| `-v` | `--verbose` | Print the full detailed receipt after the run |
 | `-h` | `--help` | Show help |
 
 Use single-letter short options (`-e`, not `-ec`). The required `--` separates aftersh options from the child command and its arguments. `af history` and `af inspect last` remain explicit subcommands.
@@ -72,31 +73,18 @@ af history
 af inspect last
 ```
 
-A fresh test directory produces a receipt like:
+By default the live receipt is a **short summary**. Full scope, limits, and low-signal directory metadata changes are in `af inspect last` (or pass `-v` on the run).
 
 ```text
-AFTERSH RECEIPT
+AFTERSH
+Observation  COMPLETE
+Command      /usr/bin/touch
+Exit         0
 
-Command
-  /usr/bin/touch
-Arguments
-  omitted
-Command exit
-  0
-Observation
-  COMPLETE
-
-OBSERVATION SCOPE
-Watched
-  /tmp/aftersh-test
-Excluded
-  ~/.local/share/aftersh (automatic: aftersh storage)
-Failed
-  none
-
-Observed between snapshots
 CREATED
   /tmp/aftersh-test/hello
+
+(+1 directory metadata — af inspect last)
 
 Receipt saved
   <receipt-id>

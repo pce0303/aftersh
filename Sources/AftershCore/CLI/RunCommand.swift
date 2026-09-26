@@ -27,6 +27,12 @@ struct RunCommand: ParsableCommand {
     )
     var receiptOutput: ReceiptOutputMode = .auto
 
+    @Flag(
+        name: [.customShort("v"), .long],
+        help: "Print the full detailed receipt after the run (default is a short summary)."
+    )
+    var verbose: Bool = false
+
     @Argument(
         parsing: .postTerminator,
         help: "Child command and arguments after --."
@@ -46,7 +52,8 @@ struct RunCommand: ParsableCommand {
 
         let manager = RunManager(
             processRunner: ProcessRunner(),
-            receiptWriter: ReceiptWriter(mode: receiptOutput)
+            receiptWriter: ReceiptWriter(mode: receiptOutput),
+            verbosity: verbose ? .detailed : .summary
         )
 
         let code = manager.run(

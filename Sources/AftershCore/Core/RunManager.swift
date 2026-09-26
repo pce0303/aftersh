@@ -6,17 +6,20 @@ struct RunManager: Sendable {
     private let receiptWriter: ReceiptWriter
     private let snapshotter: Snapshotter
     private let runStore: RunStore
+    private let verbosity: ReceiptVerbosity
 
     init(
         processRunner: ProcessRunner,
         receiptWriter: ReceiptWriter,
         snapshotter: Snapshotter = Snapshotter(),
-        runStore: RunStore = RunStore()
+        runStore: RunStore = RunStore(),
+        verbosity: ReceiptVerbosity = .summary
     ) {
         self.processRunner = processRunner
         self.receiptWriter = receiptWriter
         self.snapshotter = snapshotter
         self.runStore = runStore
+        self.verbosity = verbosity
     }
 
     /// Runs the child command and returns the wrapper exit code.
@@ -183,7 +186,8 @@ struct RunManager: Sendable {
                 scope: scope,
                 changes: changes,
                 savedReceiptId: savedId,
-                saveFailed: saveFailed
+                saveFailed: saveFailed,
+                verbosity: verbosity
             )
         )
         receiptWriter.write(text)

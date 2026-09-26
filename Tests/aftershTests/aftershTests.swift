@@ -225,12 +225,99 @@ private func meta(
             termination: .exited(0),
             scope: scope,
             changes: [],
-            saveFailed: true
+            saveFailed: true,
+            verbosity: .detailed
         )
     )
     #expect(text.contains("AFTERSH RECEIPT"))
     #expect(text.contains("Changes could not be determined"))
     #expect(text.contains("Receipt not saved."))
+}
+
+@Test func receiptSummaryHidesDirectoryMetadataOnly() {
+    let root = "/tmp/watch"
+    let file = "/tmp/watch/a.txt"
+    let t0 = Date(timeIntervalSince1970: 1)
+    let t1 = Date(timeIntervalSince1970: 2)
+    let dirBefore = FileMetadata(
+        path: root,
+        type: .directory,
+        size: 64,
+        modificationTime: t0,
+        permissions: 0o755
+    )
+    let dirAfter = FileMetadata(
+        path: root,
+        type: .directory,
+        size: 64,
+        modificationTime: t1,
+        permissions: 0o755
+    )
+    let created = ObservedChange(
+        kind: .created,
+        path: file,
+        after: meta(file)
+    )
+    let dirMod = ObservedChange(
+        kind: .modified,
+        path: root,
+        before: dirBefore,
+        after: dirAfter
+    )
+    #expect(ReceiptRenderer.isDirectoryMetadataOnlyModify(dirMod))
+
+    // Size may also change when children appear; still treated as directory metadata noise.
+    let dirAfterSize = FileMetadata(
+        path: root,
+        type: .directory,
+        size: 128,
+        modificationTime: t1,
+        permissions: 0o755
+    )
+    let dirModSize = ObservedChange(
+        kind: .modified,
+        path: root,
+        before: dirBefore,
+        after: dirAfterSize
+    )
+    #expect(ReceiptRenderer.isDirectoryMetadataOnlyModify(dirModSize))
+
+    let summary = ReceiptRenderer.render(
+        .init(
+            commandExecutable: "/usr/bin/touch",
+            termination: .exited(0),
+            scopeStatus: .complete,
+            watchedPaths: [root],
+            excludedPaths: [],
+            failures: [],
+            changes: [created, dirModSize],
+            savedReceiptId: "abc",
+            verbosity: .summary
+        )
+    )
+    #expect(summary.contains("CREATED"))
+    #expect(summary.contains(file))
+    #expect(summary.contains("directory metadata"))
+    #expect(!summary.contains("MODIFIED"))
+    #expect(!summary.contains("OBSERVATION SCOPE"))
+    #expect(!summary.contains("Arguments"))
+
+    let detailed = ReceiptRenderer.render(
+        .init(
+            commandExecutable: "/usr/bin/touch",
+            termination: .exited(0),
+            scopeStatus: .complete,
+            watchedPaths: [root],
+            excludedPaths: [],
+            failures: [],
+            changes: [created, dirModSize],
+            savedReceiptId: "abc",
+            verbosity: .detailed
+        )
+    )
+    #expect(detailed.contains("OBSERVATION SCOPE"))
+    #expect(detailed.contains("MODIFIED"))
+    #expect(detailed.contains(root))
 }
 
 @Test func runStoreSaveReloadAndLast() throws {

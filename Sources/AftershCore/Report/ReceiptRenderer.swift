@@ -175,18 +175,11 @@ public enum ReceiptRenderer {
         }
         lines.append("")
 
-        appendSemanticSection(&lines, summaries: input.semanticSummaries, title: nil)
-
-        let coveredPaths = Set(input.semanticSummaries.map(\.path))
-        let notable = input.changes.filter { change in
-            if isDirectoryMetadataOnlyModify(change) { return false }
-            // When a semantic summary already explains the file, omit redundant MODIFIED.
-            if change.kind == .modified, coveredPaths.contains(change.path) {
-                return false
-            }
-            return true
-        }
-        let collapsedDirs = input.changes.filter { isDirectoryMetadataOnlyModify($0) }.count
+        let buckets = ImportanceRanker.summarize(
+            changes: input.changes,
+            semanticSummaries: input.semanticSummaries
+        )
+        let collapsedDirs = buckets.collapsedDirectoryMetadataCount
 
         if input.scopeStatus == .failed {
             lines.append("Changes could not be determined: no comparable observation coverage.")
@@ -205,15 +198,14 @@ public enum ReceiptRenderer {
                 }
             }
             lines.append("")
-            appendChangeGroups(&lines, changes: notable, emptyMessage: nil)
-            if notable.isEmpty,
+            appendRankedSummaryBody(&lines, buckets: buckets)
+            if !buckets.hasNotableChanges,
                collapsedDirs == 0,
-               input.semanticSummaries.isEmpty,
                input.scopeStatus != .failed
             {
                 lines.append("No changes detected in successfully observed paths.")
             }
-        } else if notable.isEmpty, input.semanticSummaries.isEmpty {
+        } else if !buckets.hasNotableChanges {
             if collapsedDirs > 0 {
                 lines.append(
                     "No notable changes (+\(collapsedDirs) directory metadata — af inspect last)"
@@ -222,7 +214,7 @@ public enum ReceiptRenderer {
                 lines.append("No changes detected in successfully observed paths.")
             }
         } else {
-            appendChangeGroups(&lines, changes: notable, emptyMessage: nil)
+            appendRankedSummaryBody(&lines, buckets: buckets)
             if collapsedDirs > 0 {
                 lines.append("")
                 lines.append(
@@ -247,6 +239,17 @@ public enum ReceiptRenderer {
         lines.append("")
         appendSaveFooter(&lines, input: input)
         return lines.joined(separator: "\n")
+    }
+
+    /// Summary order: semantic → CREATED → DELETED → MODIFIED.
+    private static func appendRankedSummaryBody(
+        _ lines: inout [String],
+        buckets: ImportanceRanker.SummaryBuckets
+    ) {
+        appendSemanticSection(&lines, summaries: buckets.semanticSummaries, title: nil)
+        appendChangeGroup(&lines, title: "CREATED", changes: buckets.created)
+        appendChangeGroup(&lines, title: "DELETED", changes: buckets.deleted)
+        appendChangeGroup(&lines, title: "MODIFIED", changes: buckets.modified)
     }
 
     // MARK: - Detailed

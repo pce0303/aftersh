@@ -82,7 +82,7 @@ af -w "$FIXTURE" --content "$FIXTURE/.zshrc" -- \
 # Summary includes: PATH entry added: /new
 ```
 
-By default the live receipt is a **short summary**. Full scope, limits, and low-signal directory metadata changes are in `af inspect last` (or pass `-v` on the run).
+By default the live receipt is a **short summary** ordered by importance (semantic → created/deleted → modified; directory metadata collapsed). Full scope, limits, and low-signal directory metadata changes are in `af inspect last` (or pass `-v` on the run).
 
 ```text
 AFTERSH

@@ -525,6 +525,109 @@ private func makeReceipt(id: String, endedAt: Date) -> Receipt {
     #expect(!summary.contains("/old:/new"))
 }
 
+@Test func summaryImportanceOrderSemanticCreatedDeletedModified() {
+    let root = "/tmp/fixture"
+    let zshrc = "/tmp/fixture/.zshrc"
+    let created = "/tmp/fixture/new.txt"
+    let deleted = "/tmp/fixture/gone.txt"
+    let edited = "/tmp/fixture/edit.txt"
+    let t0 = Date(timeIntervalSince1970: 1)
+    let t1 = Date(timeIntervalSince1970: 2)
+
+    let dirMod = ObservedChange(
+        kind: .modified,
+        path: root,
+        before: FileMetadata(
+            path: root,
+            type: .directory,
+            size: 64,
+            modificationTime: t0,
+            permissions: 0o755
+        ),
+        after: FileMetadata(
+            path: root,
+            type: .directory,
+            size: 128,
+            modificationTime: t1,
+            permissions: 0o755
+        )
+    )
+
+    let changes: [ObservedChange] = [
+        ObservedChange(kind: .modified, path: edited, before: meta(edited), after: meta(edited, size: 9)),
+        dirMod,
+        ObservedChange(kind: .created, path: created, after: meta(created)),
+        ObservedChange(
+            kind: .modified,
+            path: zshrc,
+            before: meta(zshrc, size: 20),
+            after: meta(zshrc, size: 28)
+        ),
+        ObservedChange(kind: .deleted, path: deleted, before: meta(deleted)),
+    ]
+
+    let buckets = ImportanceRanker.summarize(
+        changes: changes,
+        semanticSummaries: [
+            SemanticSummary(
+                kind: "path_entry_added",
+                message: "PATH entry added: /new",
+                path: zshrc
+            )
+        ]
+    )
+    #expect(buckets.semanticSummaries.map(\.message) == ["PATH entry added: /new"])
+    #expect(buckets.created.map(\.path) == [created])
+    #expect(buckets.deleted.map(\.path) == [deleted])
+    #expect(buckets.modified.map(\.path) == [edited])
+    #expect(buckets.collapsedDirectoryMetadataCount == 1)
+
+    let summary = ReceiptRenderer.render(
+        .init(
+            commandExecutable: "/bin/sh",
+            termination: .exited(0),
+            scopeStatus: .complete,
+            watchedPaths: [root],
+            excludedPaths: [],
+            failures: [],
+            changes: changes,
+            semanticSummaries: buckets.semanticSummaries,
+            savedReceiptId: "rank-id",
+            verbosity: .summary
+        )
+    )
+
+    let pathIdx = summary.range(of: "PATH entry added: /new")!.lowerBound
+    let createdIdx = summary.range(of: "CREATED")!.lowerBound
+    let deletedIdx = summary.range(of: "DELETED")!.lowerBound
+    let modifiedIdx = summary.range(of: "MODIFIED")!.lowerBound
+    #expect(pathIdx < createdIdx)
+    #expect(createdIdx < deletedIdx)
+    #expect(deletedIdx < modifiedIdx)
+    #expect(summary.contains(edited))
+    #expect(!summary.contains(zshrc)) // covered by semantic; not listed under MODIFIED
+    #expect(summary.contains("directory metadata"))
+
+    let detailed = ReceiptRenderer.render(
+        .init(
+            commandExecutable: "/bin/sh",
+            termination: .exited(0),
+            scopeStatus: .complete,
+            watchedPaths: [root],
+            excludedPaths: [],
+            failures: [],
+            changes: changes,
+            semanticSummaries: buckets.semanticSummaries,
+            savedReceiptId: "rank-id",
+            verbosity: .detailed
+        )
+    )
+    // Detailed keeps full metadata including directory MODIFY and zshrc MODIFIED.
+    #expect(detailed.contains("MODIFIED"))
+    #expect(detailed.contains(root))
+    #expect(detailed.contains(zshrc))
+}
+
 @Test func receiptOmitsRawContentFromJSON() throws {
     let receipt = Receipt(
         id: "sem-0001",

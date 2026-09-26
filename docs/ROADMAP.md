@@ -1,6 +1,6 @@
 # aftersh Roadmap
 
-Status: v0.2 Useful Receipt — first slice in progress (selected `--content` + literal PATH summaries).
+Status: v0.2 Useful Receipt — first pass complete (selected `--content`, literal PATH summaries, summary ranking). Next feature work is v0.3.
 
 ## v0.1 — Minimal Receipt
 
@@ -115,7 +115,7 @@ Goal: explain meaningful changes without overwhelming the reader.
 - [x] Clean up temporary originals on normal completion and handled failures (in-memory only)
 - [x] Persist only sanitized semantic summaries; omit sensitive values
 - [x] Recognize conservative shell patterns, starting with literal PATH changes
-- [ ] Add importance ranking and noise filtering
+- [x] Add importance ranking and noise filtering
 - [x] Preserve access to underlying metadata observations
 
 Demo: a controlled shell-config fixture changes a literal PATH value from `/old` to `/old:/new`; the receipt explains the addition of `/new`. Unsupported shell expressions remain generic modifications.

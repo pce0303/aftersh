@@ -133,6 +133,87 @@ public struct RunStore: Sendable {
         throw RunStoreError.ambiguousPrefix(idOrPrefix, matches: matches.map(\.id))
     }
 
+    /// Deletes one receipt and returns its id. An exact `<id>.json` file is removed even when
+    /// it cannot be decoded, so corrupt receipts can still be cleaned up.
+    @discardableResult
+    public func delete(idOrPrefix: String) throws -> String {
+        let receiptId: String
+        do {
+            receiptId = try load(idOrPrefix: idOrPrefix).id
+        } catch RunStoreError.notFound {
+            guard Self.isPlainFileName(idOrPrefix) else {
+                throw RunStoreError.notFound(idOrPrefix)
+            }
+            let rawURL = directory.appendingPathComponent("\(idOrPrefix).json")
+            guard fileManager.fileExists(atPath: rawURL.path) else {
+                throw RunStoreError.notFound(idOrPrefix)
+            }
+            try removeFile(at: rawURL)
+            return idOrPrefix
+        }
+
+        guard let url = fileURL(forReceiptId: receiptId) else {
+            throw RunStoreError.notFound(receiptId)
+        }
+        try removeFile(at: url)
+        return receiptId
+    }
+
+    /// Deletes every visible `*.json` file in the receipts directory, readable or not.
+    @discardableResult
+    public func deleteAll() throws -> Int {
+        let urls: [URL]
+        do {
+            urls = try fileManager.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+        } catch {
+            return 0
+        }
+
+        var count = 0
+        for url in urls where url.pathExtension == "json" {
+            try removeFile(at: url)
+            count += 1
+        }
+        return count
+    }
+
+    private func fileURL(forReceiptId id: String) -> URL? {
+        let direct = directory.appendingPathComponent("\(id).json")
+        if fileManager.fileExists(atPath: direct.path) {
+            return direct
+        }
+        let urls = (try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        return urls.first { url in
+            url.pathExtension == "json" && (try? decodeFile(at: url))?.id == id
+        }
+    }
+
+    private func removeFile(at url: URL) throws {
+        do {
+            try fileManager.removeItem(at: url)
+        } catch {
+            throw RunStoreError.io(
+                "cannot delete \(url.lastPathComponent): \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private static func isPlainFileName(_ value: String) -> Bool {
+        !value.isEmpty
+            && !value.contains("/")
+            && value != "."
+            && value != ".."
+            && !value.hasPrefix(".")
+    }
+
     private func decodeFile(at url: URL) throws -> Receipt {
         let data: Data
         do {

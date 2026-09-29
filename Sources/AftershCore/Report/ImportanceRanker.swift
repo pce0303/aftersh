@@ -33,6 +33,7 @@ public enum ImportanceRanker {
     }
 
     /// Priority for summary: semantic → created/deleted → modified; directory metadata collapsed.
+    /// A path explained by a semantic summary is not repeated in the change buckets.
     public static func summarize(
         changes: [ObservedChange],
         semanticSummaries: [SemanticSummary]
@@ -48,7 +49,7 @@ public enum ImportanceRanker {
                 collapsedDirs += 1
                 continue
             }
-            if change.kind == .modified, coveredPaths.contains(change.path) {
+            if coveredPaths.contains(change.path) {
                 continue
             }
             switch change.kind {

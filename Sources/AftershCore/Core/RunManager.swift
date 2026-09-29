@@ -83,6 +83,7 @@ struct RunManager: Sendable {
             let snap = ContentCapture.capture(path: selection)
             beforeContent[selection.canonical] = snap
         }
+        let launchdBefore = LaunchdInspector.captureBefore(snapshot: before)
 
         let startedAt = Date()
         let termination: ProcessTermination
@@ -105,7 +106,8 @@ struct RunManager: Sendable {
                 persist: false,
                 beforeContent: beforeContent,
                 afterContent: [:],
-                contentSelections: contentSelections
+                contentSelections: contentSelections,
+                launchdBefore: launchdBefore
             )
             return launchExitCode(error)
         } catch {
@@ -135,7 +137,8 @@ struct RunManager: Sendable {
             persist: true,
             beforeContent: beforeContent,
             afterContent: afterContent,
-            contentSelections: contentSelections
+            contentSelections: contentSelections,
+            launchdBefore: launchdBefore
         )
 
         return termination.wrapperExitCode
@@ -179,7 +182,8 @@ struct RunManager: Sendable {
         persist: Bool,
         beforeContent: [String: ContentCapture.Snapshot],
         afterContent: [String: ContentCapture.Snapshot],
-        contentSelections: [NormalizedPath]
+        contentSelections: [NormalizedPath],
+        launchdBefore: [String: LaunchdInspector.BeforeState]
     ) {
         let changes = DiffEngine.diff(before: scope.before, after: scope.after)
         let duration = endedAt.timeIntervalSince(startedAt)
@@ -204,6 +208,10 @@ struct RunManager: Sendable {
                 )
             )
         }
+
+        let launchd = LaunchdInspector.summarize(changes: changes, before: launchdBefore)
+        semanticSummaries.append(contentsOf: launchd.summaries)
+        contentLimitations.append(contentsOf: launchd.limitations)
 
         // Raw content stays only in local dictionaries above; do not copy into Receipt.
         var savedId: String?

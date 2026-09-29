@@ -45,7 +45,12 @@ struct AftershRoot: ParsableCommand {
                 Execution is the default subcommand. Separate wrapper options from the \
                 child command with --.
                 """,
-            subcommands: [RunCommand.self, HistoryCommand.self, InspectCommand.self],
+            subcommands: [
+                RunCommand.self,
+                HistoryCommand.self,
+                InspectCommand.self,
+                DeleteCommand.self,
+            ],
             defaultSubcommand: RunCommand.self
         )
     }

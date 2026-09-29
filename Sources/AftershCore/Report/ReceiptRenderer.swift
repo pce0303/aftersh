@@ -216,7 +216,9 @@ public enum ReceiptRenderer {
         } else {
             appendRankedSummaryBody(&lines, buckets: buckets)
             if collapsedDirs > 0 {
-                lines.append("")
+                if lines.last != "" {
+                    lines.append("")
+                }
                 lines.append(
                     "(+\(collapsedDirs) directory metadata — af inspect last)"
                 )

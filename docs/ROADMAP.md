@@ -1,6 +1,6 @@
 # aftersh Roadmap
 
-Status: v0.2 Useful Receipt — first pass complete (selected `--content`, literal PATH summaries, summary ranking). Next feature work is v0.3.
+Status: v0.3 macOS Awareness — in progress (launchd definition summaries done; FSEvents and pkgutil next). v0.2 first pass is complete.
 
 ## v0.1 — Minimal Receipt
 
@@ -126,8 +126,8 @@ Acceptance: representative setup scripts yield readable summaries; selected-file
 
 - [ ] Add FSEvents as supplemental evidence
 - [ ] Define watcher readiness, draining, timing gaps, and dropped-event handling
-- [ ] Parse LaunchAgent/LaunchDaemon definitions and relevant plist fields
-- [ ] Distinguish observed service definitions from verified runtime state
+- [x] Parse LaunchAgent/LaunchDaemon definitions and relevant plist fields (within `--watch` scope)
+- [x] Distinguish observed service definitions from verified runtime state (wording only; no `launchctl` query)
 - [ ] Compare macOS package receipts through pkgutil
 - [ ] Document new-ID detection versus same-ID package updates
 - [ ] Broaden supported scopes gradually, with performance and permission measurements

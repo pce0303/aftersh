@@ -386,6 +386,83 @@ private func meta(
     #expect(listed.map(\.id) == ["good-0001"])
 }
 
+@Test func runStoreDeleteByPrefixAndLast() throws {
+    let fm = FileManager.default
+    let dir = fm.temporaryDirectory.appendingPathComponent("aftersh-store-\(UUID().uuidString)")
+    try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: dir) }
+
+    let store = RunStore(directory: dir, fileManager: fm)
+    try store.save(makeReceipt(id: "aaaa-1111", endedAt: Date(timeIntervalSince1970: 1)))
+    try store.save(makeReceipt(id: "bbbb-2222", endedAt: Date(timeIntervalSince1970: 2)))
+    try store.save(makeReceipt(id: "cccc-3333", endedAt: Date(timeIntervalSince1970: 3)))
+
+    #expect(try store.delete(idOrPrefix: "aaaa") == "aaaa-1111")
+    #expect(try store.delete(idOrPrefix: "last") == "cccc-3333")
+    #expect(store.list(emitDiagnostics: false).map(\.id) == ["bbbb-2222"])
+
+    do {
+        try store.delete(idOrPrefix: "zzzz")
+        Issue.record("expected notFound")
+    } catch RunStoreError.notFound {
+        // expected
+    }
+}
+
+@Test func runStoreDeleteRejectsAmbiguousPrefix() throws {
+    let fm = FileManager.default
+    let dir = fm.temporaryDirectory.appendingPathComponent("aftersh-store-\(UUID().uuidString)")
+    try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: dir) }
+
+    let store = RunStore(directory: dir, fileManager: fm)
+    try store.save(makeReceipt(id: "abcd-1111", endedAt: Date(timeIntervalSince1970: 1)))
+    try store.save(makeReceipt(id: "abcd-2222", endedAt: Date(timeIntervalSince1970: 2)))
+
+    do {
+        try store.delete(idOrPrefix: "abcd")
+        Issue.record("expected ambiguous prefix error")
+    } catch RunStoreError.ambiguousPrefix {
+        // expected
+    }
+    #expect(store.list(emitDiagnostics: false).count == 2)
+}
+
+@Test func runStoreDeleteCorruptFileAndDeleteAll() throws {
+    let fm = FileManager.default
+    let dir = fm.temporaryDirectory.appendingPathComponent("aftersh-store-\(UUID().uuidString)")
+    try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: dir) }
+
+    let store = RunStore(directory: dir, fileManager: fm)
+    try store.save(makeReceipt(id: "good-0001", endedAt: Date(timeIntervalSince1970: 1)))
+    try store.save(makeReceipt(id: "good-0002", endedAt: Date(timeIntervalSince1970: 2)))
+    try "not-json".write(
+        to: dir.appendingPathComponent("broken.json"),
+        atomically: true,
+        encoding: .utf8
+    )
+    try "keep".write(
+        to: dir.appendingPathComponent(".hidden.json"),
+        atomically: true,
+        encoding: .utf8
+    )
+
+    #expect(try store.delete(idOrPrefix: "broken") == "broken")
+    #expect(!fm.fileExists(atPath: dir.appendingPathComponent("broken.json").path))
+
+    do {
+        try store.delete(idOrPrefix: "../escape")
+        Issue.record("expected notFound for path-like id")
+    } catch RunStoreError.notFound {
+        // expected
+    }
+
+    #expect(try store.deleteAll() == 2)
+    #expect(store.list(emitDiagnostics: false).isEmpty)
+    #expect(fm.fileExists(atPath: dir.appendingPathComponent(".hidden.json").path))
+}
+
 private func makeReceipt(id: String, endedAt: Date) -> Receipt {
     Receipt(
         id: id,
@@ -737,4 +814,161 @@ private func makeReceipt(id: String, endedAt: Date) -> Receipt {
     let json = String(decoding: try encoder.encode(receipt), as: UTF8.self)
     #expect(!json.contains("export PATH=/old:/new"))
     #expect(!json.contains("\"text\""))
+}
+
+// MARK: - launchd
+
+private func writePlist(
+    _ dictionary: [String: Any],
+    to url: URL,
+    format: PropertyListSerialization.PropertyListFormat = .xml
+) throws {
+    let data = try PropertyListSerialization.data(
+        fromPropertyList: dictionary,
+        format: format,
+        options: 0
+    )
+    try data.write(to: url)
+}
+
+private func makeLaunchAgentsDir() throws -> URL {
+    let fm = FileManager.default
+    let dir = fm.temporaryDirectory
+        .appendingPathComponent("aftersh-launchd-\(UUID().uuidString)")
+        .appendingPathComponent("Library/LaunchAgents")
+    try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+    return dir
+}
+
+@Test func launchdDomainDetection() {
+    #expect(LaunchdInspector.domain(forPath: "/Users/x/Library/LaunchAgents/a.plist") == .agent)
+    #expect(LaunchdInspector.domain(forPath: "/Library/LaunchDaemons/b.plist") == .daemon)
+    #expect(LaunchdInspector.domain(forPath: "/Users/x/Library/LaunchAgents/a.txt") == nil)
+    #expect(LaunchdInspector.domain(forPath: "/Users/x/Library/LaunchAgents/sub/a.plist") == nil)
+    #expect(LaunchdInspector.domain(forPath: "/tmp/other/a.plist") == nil)
+}
+
+@Test func launchdChangedBinaryPlistAndRemoved() throws {
+    let fm = FileManager.default
+    let agents = try makeLaunchAgentsDir()
+    defer { try? fm.removeItem(at: agents.deletingLastPathComponent().deletingLastPathComponent()) }
+
+    let plist = agents.appendingPathComponent("com.example.test.plist")
+    try writePlist(
+        ["Label": "com.example.test", "ProgramArguments": ["/usr/local/bin/tool"]],
+        to: plist
+    )
+    let before = FilesystemSnapshot(
+        entries: [plist.path: meta(plist.path)],
+        coverage: SnapshotCoverage(successfullyScannedPaths: [plist.path])
+    )
+    let beforeStates = LaunchdInspector.captureBefore(snapshot: before, fileManager: fm)
+    #expect(beforeStates[plist.path]?.definition?.label == "com.example.test")
+
+    try writePlist(
+        [
+            "Label": "com.example.test",
+            "ProgramArguments": ["/usr/local/bin/tool"],
+            "RunAtLoad": true,
+            "KeepAlive": ["SuccessfulExit": false],
+        ],
+        to: plist,
+        format: .binary
+    )
+    let modified = LaunchdInspector.summarize(
+        changes: [ObservedChange(kind: .modified, path: plist.path, before: meta(plist.path), after: meta(plist.path, size: 2))],
+        before: beforeStates,
+        fileManager: fm
+    )
+    #expect(modified.limitations.isEmpty)
+    #expect(modified.summaries.map(\.message) == [
+        "LaunchAgent definition changed: com.example.test (RunAtLoad false -> true, KeepAlive off -> conditional)"
+    ])
+    #expect(modified.summaries.first?.kind == "launchd_definition_changed")
+
+    try fm.removeItem(at: plist)
+    let removed = LaunchdInspector.summarize(
+        changes: [ObservedChange(kind: .deleted, path: plist.path, before: meta(plist.path))],
+        before: beforeStates,
+        fileManager: fm
+    )
+    #expect(removed.summaries.map(\.message) == ["LaunchAgent definition removed: com.example.test"])
+}
+
+@Test func launchdInvalidPlistRecordsLimitation() throws {
+    let fm = FileManager.default
+    let agents = try makeLaunchAgentsDir()
+    defer { try? fm.removeItem(at: agents.deletingLastPathComponent().deletingLastPathComponent()) }
+
+    let plist = agents.appendingPathComponent("broken.plist")
+    try "not a plist".write(to: plist, atomically: true, encoding: .utf8)
+
+    let result = LaunchdInspector.summarize(
+        changes: [ObservedChange(kind: .created, path: plist.path, after: meta(plist.path))],
+        before: [:],
+        fileManager: fm
+    )
+    #expect(result.summaries.isEmpty)
+    #expect(result.limitations.count == 1)
+    #expect(result.limitations[0].contains("invalid property list"))
+}
+
+@Test func endToEndLaunchAgentObservedWithoutSecrets() throws {
+    let fm = FileManager.default
+    let agents = try makeLaunchAgentsDir()
+    let fixtureRoot = agents.deletingLastPathComponent().deletingLastPathComponent()
+    defer { try? fm.removeItem(at: fixtureRoot) }
+
+    let template = fixtureRoot.appendingPathComponent("template.plist")
+    try writePlist(
+        [
+            "Label": "com.example.test",
+            "ProgramArguments": ["/usr/local/bin/tool", "--token", "SECRET_ARG_VALUE"],
+            "RunAtLoad": true,
+            "EnvironmentVariables": ["API_KEY": "SECRET_ENV_VALUE"],
+        ],
+        to: template
+    )
+
+    let storeDir = fm.temporaryDirectory.appendingPathComponent(
+        "aftersh-launchd-store-\(UUID().uuidString)"
+    )
+    try fm.createDirectory(at: storeDir, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: storeDir) }
+
+    let manager = RunManager(
+        processRunner: ProcessRunner(),
+        receiptWriter: ReceiptWriter(mode: .none),
+        runStore: RunStore(directory: storeDir, fileManager: fm),
+        verbosity: .summary
+    )
+    let destination = agents.appendingPathComponent("com.example.test.plist")
+    let code = manager.run(
+        command: ["/bin/cp", template.path, destination.path],
+        watchPaths: [agents.path],
+        excludePaths: []
+    )
+    #expect(code == 0)
+
+    let receipts = RunStore(directory: storeDir, fileManager: fm).list(emitDiagnostics: false)
+    #expect(receipts.count == 1)
+    let receipt = receipts[0]
+    #expect(receipt.semanticSummaries.map(\.message) == [
+        "LaunchAgent definition observed: com.example.test (RunAtLoad; program /usr/local/bin/tool)"
+    ])
+
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    let json = String(decoding: try encoder.encode(receipt), as: UTF8.self)
+    #expect(!json.contains("SECRET_ARG_VALUE"))
+    #expect(!json.contains("SECRET_ENV_VALUE"))
+    #expect(!json.contains("API_KEY"))
+
+    let summary = ReceiptRenderer.render(receipt: receipt, verbosity: .summary)
+    #expect(summary.contains("LaunchAgent definition observed: com.example.test"))
+    #expect(!summary.contains("CREATED"))
+
+    let detailed = ReceiptRenderer.render(receipt: receipt, verbosity: .detailed)
+    #expect(detailed.contains("CREATED"))
+    #expect(detailed.contains("com.example.test.plist"))
 }

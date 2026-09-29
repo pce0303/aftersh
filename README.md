@@ -4,7 +4,7 @@
 
 `aftersh` is a macOS CLI that turns changes observed around a shell command into a human-readable receipt.
 
-**Status: v0.1 Minimal Receipt (release gate complete).** Core flow: run → snapshot → diff → save → history/inspect.
+**Status: v0.3 in progress.** v0.1 (run → snapshot → diff → save → history/inspect) and the v0.2 first pass (selected content, literal PATH summaries, summary ranking) are complete; launchd definition summaries are the first v0.3 slice.
 
 ## Why aftersh?
 
@@ -18,7 +18,11 @@ The product is the receipt: useful information about observed changes, with clea
 - macOS 13+ (see `Package.swift`)
 - Swift 6.4+ / Swift Package Manager (Xcode or Command Line Tools)
 
-Full `swift test` needs the Swift Testing macros from a complete Xcode toolchain. With Command Line Tools alone, `swift build` works; `swift test` may fail to compile the test macros.
+Full `swift test` needs the Swift Testing macros. With a complete Xcode toolchain, plain `swift test` works. With Command Line Tools alone, point the compiler at the macro plugin:
+
+```bash
+swift test -Xswiftc -plugin-path -Xswiftc /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing
+```
 
 ## Install / build
 
@@ -42,7 +46,7 @@ The first release has one small contract:
 - Report CREATE / MODIFY / DELETE observations with coverage information.
 - Save a JSON receipt and provide `history` and `inspect`.
 
-FSEvents, semantic shell diffs, importance ranking, Launchd inspection, and package inspection are later milestones.
+Semantic shell diffs and importance ranking arrived in v0.2; launchd definition summaries in v0.3. FSEvents and package inspection are later milestones.
 
 ### Usage
 
@@ -63,7 +67,7 @@ aftersh run --watch . --exclude ./node_modules -- npm install
 | `-v` | `--verbose` | Print the full detailed receipt after the run |
 | `-h` | `--help` | Show help |
 
-Use single-letter short options (`-e`, not `-ec`). The required `--` separates aftersh options from the child command and its arguments. `af history` and `af inspect last` remain explicit subcommands.
+Use single-letter short options (`-e`, not `-ec`). The required `--` separates aftersh options from the child command and its arguments. `af history`, `af inspect`, and `af delete` remain explicit subcommands.
 
 ### Reproducible demo
 
@@ -80,7 +84,18 @@ printf 'export PATH=/old\n' > "$FIXTURE/.zshrc"
 af -w "$FIXTURE" --content "$FIXTURE/.zshrc" -- \
   sh -c 'printf "export PATH=/old:/new\n" > "$0/.zshrc"' "$FIXTURE"
 # Summary includes: PATH entry added: /new
+
+# LaunchAgent definition summary (v0.3); use a fixture, not your real ~/Library
+AGENTS=/tmp/aftersh-launchd-demo/LaunchAgents
+mkdir -p "$AGENTS"
+plutil -create xml1 /tmp/aftersh-launchd-demo/demo.plist
+plutil -insert Label -string com.example.demo /tmp/aftersh-launchd-demo/demo.plist
+plutil -insert RunAtLoad -bool YES /tmp/aftersh-launchd-demo/demo.plist
+af -w "$AGENTS" -- cp /tmp/aftersh-launchd-demo/demo.plist "$AGENTS/com.example.demo.plist"
+# Summary includes: LaunchAgent definition observed: com.example.demo (RunAtLoad)
 ```
+
+When a changed `.plist` sits directly inside a watched `LaunchAgents` or `LaunchDaemons` directory, the receipt summarizes the definition: `Label`, the program path (`Program` or the first `ProgramArguments` entry), `RunAtLoad`, `KeepAlive`, and whether `StartInterval` is set. Remaining arguments and `EnvironmentVariables` are never stored. The summary says a definition was **observed**; it does not claim the job is loaded or running.
 
 By default the live receipt is a **short summary** ordered by importance (semantic → created/deleted → modified; directory metadata collapsed). Full scope, limits, and low-signal directory metadata changes are in `af inspect last` (or pass `-v` on the run).
 
@@ -100,6 +115,13 @@ Receipt saved
 ```
 
 Receipts are written under `~/.local/share/aftersh/receipts/` (`0700` / `0600`). Use `af history` and `af inspect last` (or an id / unambiguous prefix) to reload them. A save failure is reported separately and never claims `Receipt saved`.
+
+```bash
+af delete 35b6c507     # one receipt: id, unambiguous prefix, or last
+af delete --all --yes  # every saved receipt; --all without --yes is refused
+```
+
+`af delete <id>` also removes an exact `<id>.json` file that can no longer be decoded, so corrupt receipts can be cleaned up without touching the directory by hand.
 
 `COMPLETE` means the selected, non-excluded scope was scanned successfully at both endpoints. It does not mean every system change was captured. Metadata comparison can miss content changes, and transient changes between snapshots may disappear.
 

@@ -58,6 +58,8 @@ public struct Receipt: Equatable, Sendable, Codable {
     public var changes: [ObservedChange]
     public var semanticSummaries: [SemanticSummary]
     public var contentLimitations: [String]
+    /// Present only when the run used `--events`.
+    public var events: EventObservation?
     public var interrupted: Bool
 
     public init(
@@ -75,6 +77,7 @@ public struct Receipt: Equatable, Sendable, Codable {
         changes: [ObservedChange],
         semanticSummaries: [SemanticSummary] = [],
         contentLimitations: [String] = [],
+        events: EventObservation? = nil,
         interrupted: Bool = false
     ) {
         self.schemaVersion = schemaVersion
@@ -91,13 +94,14 @@ public struct Receipt: Equatable, Sendable, Codable {
         self.changes = changes
         self.semanticSummaries = semanticSummaries
         self.contentLimitations = contentLimitations
+        self.events = events
         self.interrupted = interrupted
     }
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion, aftershVersion, id, commandExecutable, argumentsOmitted
         case workingDirectory, startedAt, endedAt, commandDuration, termination
-        case observation, changes, semanticSummaries, contentLimitations, interrupted
+        case observation, changes, semanticSummaries, contentLimitations, events, interrupted
     }
 
     public init(from decoder: Decoder) throws {
@@ -122,6 +126,7 @@ public struct Receipt: Equatable, Sendable, Codable {
             [String].self,
             forKey: .contentLimitations
         ) ?? []
+        events = try container.decodeIfPresent(EventObservation.self, forKey: .events)
         interrupted = try container.decode(Bool.self, forKey: .interrupted)
     }
 }

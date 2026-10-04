@@ -1,6 +1,6 @@
 # aftersh Roadmap
 
-Status: v0.3 macOS Awareness — in progress (launchd definition summaries done; FSEvents and pkgutil next). v0.2 first pass is complete.
+Status: v0.3 macOS Awareness — launchd definition summaries, `--pkgutil`, and `--events` are done; broader scopes remain. v0.2 first pass is complete.
 
 ## v0.1 — Minimal Receipt
 
@@ -124,13 +124,17 @@ Acceptance: representative setup scripts yield readable summaries; selected-file
 
 ## v0.3 — macOS Awareness
 
-- [ ] Add FSEvents as supplemental evidence
-- [ ] Define watcher readiness, draining, timing gaps, and dropped-event handling
+- [x] Add FSEvents as supplemental evidence (opt-in `--events`; transient paths + event status)
+- [x] Define watcher readiness, draining, timing gaps, and dropped-event handling (see [watcher contract](ARCHITECTURE.md#fsevents-watcher-contract))
 - [x] Parse LaunchAgent/LaunchDaemon definitions and relevant plist fields (within `--watch` scope)
 - [x] Distinguish observed service definitions from verified runtime state (wording only; no `launchctl` query)
-- [ ] Compare macOS package receipts through pkgutil
-- [ ] Document new-ID detection versus same-ID package updates
+- [x] Compare macOS package receipts through pkgutil (opt-in `--pkgutil`)
+- [x] Document new-ID detection versus same-ID package updates (README)
 - [ ] Broaden supported scopes gradually, with performance and permission measurements
+
+Notes:
+
+- Overhead on a ~2000-file `/tmp` fixture (median of 8 wall-clock runs): baseline ~0.31 s, `--pkgutil` +~0.02 s, `--events` +~0.07 s, both +~0.08 s. See README.
 
 Acceptance: receipts explain observed service definitions and package receipts without implying proven command attribution. Runtime monitoring gaps remain visible.
 

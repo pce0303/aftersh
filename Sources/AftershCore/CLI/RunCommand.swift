@@ -40,6 +40,18 @@ struct RunCommand: ParsableCommand {
     )
     var verbose: Bool = false
 
+    @Flag(
+        name: .long,
+        help: "Compare macOS package receipts (pkgutil) before and after the run."
+    )
+    var pkgutil: Bool = false
+
+    @Flag(
+        name: .long,
+        help: "Record FSEvents under the watched paths during the run as supplemental evidence."
+    )
+    var events: Bool = false
+
     @Argument(
         parsing: .postTerminator,
         help: "Child command and arguments after --."
@@ -60,7 +72,9 @@ struct RunCommand: ParsableCommand {
         let manager = RunManager(
             processRunner: ProcessRunner(),
             receiptWriter: ReceiptWriter(mode: receiptOutput),
-            verbosity: verbose ? .detailed : .summary
+            verbosity: verbose ? .detailed : .summary,
+            packageSource: pkgutil ? PkgutilSource() : nil,
+            recordEvents: events
         )
 
         let code = manager.run(

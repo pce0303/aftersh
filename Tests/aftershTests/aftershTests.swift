@@ -816,6 +816,212 @@ private func makeReceipt(id: String, endedAt: Date) -> Receipt {
     #expect(!json.contains("\"text\""))
 }
 
+// MARK: - pkgutil
+
+private struct FakePackageSource: PackageReceiptSource {
+    var ids: Result<Set<String>, PackageSourceError>
+    var versions: [String: String] = [:]
+    var receipts: [String: PackageReceiptFile]? = [:]
+
+    func listIDs() -> Result<Set<String>, PackageSourceError> { ids }
+    func version(for id: String) -> String? { versions[id] }
+    func receiptModificationDates(for ids: Set<String>) -> [String: PackageReceiptFile]? {
+        receipts?.filter { ids.contains($0.key) }
+    }
+}
+
+private func receiptFile(_ id: String, _ seconds: TimeInterval) -> PackageReceiptFile {
+    PackageReceiptFile(
+        path: "/var/db/receipts/\(id).plist",
+        modificationDate: Date(timeIntervalSince1970: seconds)
+    )
+}
+
+@Test func packageReceiptsAddedUpdatedRemoved() {
+    let beforeSource = FakePackageSource(
+        ids: .success(["com.example.kept", "com.example.updated", "com.example.gone"]),
+        receipts: [
+            "com.example.kept": receiptFile("com.example.kept", 1),
+            "com.example.updated": receiptFile("com.example.updated", 1),
+            "com.example.gone": receiptFile("com.example.gone", 1),
+        ]
+    )
+    let afterSource = FakePackageSource(
+        ids: .success(["com.example.kept", "com.example.updated", "com.example.new"]),
+        versions: ["com.example.new": "1.2.3", "com.example.updated": "2.0"],
+        receipts: [
+            "com.example.kept": receiptFile("com.example.kept", 1),
+            "com.example.updated": receiptFile("com.example.updated", 2),
+            "com.example.new": receiptFile("com.example.new", 2),
+        ]
+    )
+
+    let result = PackageReceiptInspector.summarize(
+        before: PackageReceiptInspector.capture(source: beforeSource),
+        after: PackageReceiptInspector.capture(source: afterSource),
+        source: afterSource
+    )
+    #expect(result.limitations.isEmpty)
+    #expect(result.summaries.map(\.message) == [
+        "Package receipt added: com.example.new 1.2.3",
+        "Package receipt updated: com.example.updated (version now 2.0)",
+        "Package receipt removed: com.example.gone",
+    ])
+    #expect(result.summaries.map(\.kind) == [
+        "pkg_receipt_added", "pkg_receipt_updated", "pkg_receipt_removed",
+    ])
+    #expect(result.summaries[0].path == "/var/db/receipts/com.example.new.plist")
+}
+
+@Test func packageReceiptsSourceFailureAndUnreadableReceipts() {
+    let failing = FakePackageSource(ids: .failure(PackageSourceError("pkgutil exited with status 1")))
+    let ok = FakePackageSource(ids: .success(["com.example.a"]), receipts: nil)
+
+    let failed = PackageReceiptInspector.summarize(
+        before: PackageReceiptInspector.capture(source: failing),
+        after: PackageReceiptInspector.capture(source: ok),
+        source: ok
+    )
+    #expect(failed.summaries.isEmpty)
+    #expect(failed.limitations == [
+        "pkgutil (before): pkgutil exited with status 1; package receipts not compared"
+    ])
+
+    let noReceipts = PackageReceiptInspector.summarize(
+        before: PackageReceiptInspector.capture(source: ok),
+        after: PackageReceiptInspector.capture(source: ok),
+        source: ok
+    )
+    #expect(noReceipts.summaries.isEmpty)
+    #expect(noReceipts.limitations == [
+        "same-ID package updates not compared: receipt directories unreadable"
+    ])
+}
+
+/// Returns the first ID set on the first `listIDs()` call and the second set afterwards.
+private final class SteppingPackageSource: PackageReceiptSource, @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls = 0
+    private let first: Set<String>
+    private let second: Set<String>
+
+    init(first: Set<String>, second: Set<String>) {
+        self.first = first
+        self.second = second
+    }
+
+    func listIDs() -> Result<Set<String>, PackageSourceError> {
+        lock.lock()
+        defer { lock.unlock() }
+        calls += 1
+        return .success(calls == 1 ? first : second)
+    }
+
+    func version(for id: String) -> String? { "9.9" }
+
+    func receiptModificationDates(for ids: Set<String>) -> [String: PackageReceiptFile]? {
+        Dictionary(uniqueKeysWithValues: ids.map { ($0, receiptFile($0, 1)) })
+    }
+}
+
+@Test func runManagerPersistsPackageReceiptSummaries() throws {
+    let fm = FileManager.default
+    let watch = fm.temporaryDirectory.appendingPathComponent("aftersh-pkg-\(UUID().uuidString)")
+    let storeDir = fm.temporaryDirectory.appendingPathComponent("aftersh-pkg-store-\(UUID().uuidString)")
+    try fm.createDirectory(at: watch, withIntermediateDirectories: true)
+    try fm.createDirectory(at: storeDir, withIntermediateDirectories: true)
+    defer {
+        try? fm.removeItem(at: watch)
+        try? fm.removeItem(at: storeDir)
+    }
+
+    let manager = RunManager(
+        processRunner: ProcessRunner(),
+        receiptWriter: ReceiptWriter(mode: .none),
+        runStore: RunStore(directory: storeDir, fileManager: fm),
+        packageSource: SteppingPackageSource(
+            first: ["com.example.base"],
+            second: ["com.example.base", "com.example.tool"]
+        )
+    )
+    #expect(manager.run(command: ["/usr/bin/true"], watchPaths: [watch.path], excludePaths: []) == 0)
+
+    let receipt = try #require(RunStore(directory: storeDir, fileManager: fm).list(emitDiagnostics: false).first)
+    #expect(receipt.semanticSummaries.map(\.message) == ["Package receipt added: com.example.tool 9.9"])
+}
+
+@Test func pkgutilSourceListsRealReceipts() {
+    let source = PkgutilSource()
+    guard case .success(let ids) = source.listIDs() else {
+        Issue.record("pkgutil --pkgs failed")
+        return
+    }
+    #expect(!ids.isEmpty)
+    let receipts = source.receiptModificationDates(for: ids)
+    #expect(receipts != nil)
+    if let any = ids.sorted().first {
+        #expect(source.version(for: any) != nil)
+    }
+}
+
+// MARK: - FSEvents aggregation
+
+private let eventRoot = NormalizedPath(display: "/tmp/watch", canonical: "/private/tmp/watch")
+
+@Test func eventAggregatorMapsFiltersAndFindsTransientPaths() {
+    var aggregator = EventAggregator(
+        roots: [eventRoot],
+        excludedCanonical: ["/private/tmp/watch/node_modules"]
+    )
+    let created = UInt32(kFSEventStreamEventFlagItemCreated)
+    aggregator.ingest(path: "/private/tmp/watch/tmpfile", flags: created)
+    aggregator.ingest(path: "/private/tmp/watch/kept.txt", flags: created)
+    aggregator.ingest(path: "/private/tmp/watch/node_modules/x", flags: created)
+    aggregator.ingest(path: "/private/tmp/other/y", flags: created)
+    aggregator.ingest(path: "/private/tmp/watch/tmpfile", flags: created)
+    aggregator.ingest(path: "", flags: UInt32(kFSEventStreamEventFlagHistoryDone))
+
+    let observation = aggregator.observation(changes: [
+        ObservedChange(kind: .created, path: "/tmp/watch/kept.txt", after: meta("/tmp/watch/kept.txt"))
+    ])
+    #expect(observation.status == .complete)
+    #expect(observation.transientPaths == ["/tmp/watch/tmpfile"])
+    #expect(observation.transientCount == 1)
+    #expect(observation.gaps.isEmpty)
+}
+
+@Test func eventAggregatorRecordsDropGapsAndCap() {
+    var aggregator = EventAggregator(roots: [eventRoot], excludedCanonical: [])
+    aggregator.ingest(
+        path: "/private/tmp/watch/sub",
+        flags: UInt32(kFSEventStreamEventFlagMustScanSubDirs | kFSEventStreamEventFlagKernelDropped)
+    )
+    var observation = aggregator.observation(changes: [])
+    #expect(observation.status == .gapped)
+    #expect(observation.gaps == [
+        "/tmp/watch/sub: events coalesced; subtree must be rescanned",
+        "/tmp/watch/sub: events dropped in kernel",
+    ])
+
+    var capped = EventAggregator(roots: [eventRoot], excludedCanonical: [])
+    for index in 0...EventAggregator.maxPaths {
+        capped.ingest(path: "/private/tmp/watch/f\(index)", flags: 0)
+    }
+    observation = capped.observation(changes: [])
+    #expect(observation.status == .gapped)
+    #expect(observation.transientCount == EventAggregator.maxPaths)
+    #expect(observation.transientPaths.count == EventObservation.maxStoredTransientPaths)
+    #expect(observation.gaps.contains { $0.contains("event path cap reached") })
+}
+
+@Test func eventAggregatorUnavailable() {
+    var aggregator = EventAggregator(roots: [eventRoot], excludedCanonical: [])
+    aggregator.ingest(path: "/private/tmp/watch/a", flags: 0)
+    aggregator.markUnavailable("FSEvents stream could not start")
+    let observation = aggregator.observation(changes: [])
+    #expect(observation == EventObservation(status: .unavailable, gaps: ["FSEvents stream could not start"]))
+}
+
 // MARK: - launchd
 
 private func writePlist(
@@ -971,4 +1177,79 @@ private func makeLaunchAgentsDir() throws -> URL {
     let detailed = ReceiptRenderer.render(receipt: receipt, verbosity: .detailed)
     #expect(detailed.contains("CREATED"))
     #expect(detailed.contains("com.example.test.plist"))
+}
+
+private func runEventsScenario(recordEvents: Bool) throws -> Receipt {
+    let fm = FileManager.default
+    let watch = fm.temporaryDirectory.appendingPathComponent("aftersh-events-\(UUID().uuidString)")
+    let storeDir = fm.temporaryDirectory.appendingPathComponent("aftersh-events-store-\(UUID().uuidString)")
+    try fm.createDirectory(at: watch, withIntermediateDirectories: true)
+    try fm.createDirectory(at: storeDir, withIntermediateDirectories: true)
+    defer {
+        try? fm.removeItem(at: watch)
+        try? fm.removeItem(at: storeDir)
+    }
+
+    let manager = RunManager(
+        processRunner: ProcessRunner(),
+        receiptWriter: ReceiptWriter(mode: .none),
+        runStore: RunStore(directory: storeDir, fileManager: fm),
+        recordEvents: recordEvents
+    )
+    let transient = watch.appendingPathComponent("a").path
+    let code = manager.run(
+        command: ["/bin/sh", "-c", "touch '\(transient)'; rm '\(transient)'"],
+        watchPaths: [watch.path],
+        excludePaths: []
+    )
+    #expect(code == 0)
+    return try #require(RunStore(directory: storeDir, fileManager: fm).list(emitDiagnostics: false).first)
+}
+
+@Test func runManagerRecordsTransientEventPaths() throws {
+    let receipt = try runEventsScenario(recordEvents: true)
+    #expect(receipt.changes.allSatisfy(ReceiptRenderer.isDirectoryMetadataOnlyModify))
+
+    let events = try #require(receipt.events)
+    #expect(events.status == .complete)
+    #expect(events.transientPaths.map { ($0 as NSString).lastPathComponent } == ["a"])
+    #expect(events.transientCount == events.transientPaths.count)
+    #expect(events.transientPaths.allSatisfy { !$0.hasPrefix("/private/") })
+
+    let summary = ReceiptRenderer.render(receipt: receipt, verbosity: .summary)
+    #expect(summary.contains("Events       COMPLETE"))
+    #expect(summary.contains("+1 path seen only in events"))
+
+    let detailed = ReceiptRenderer.render(receipt: receipt, verbosity: .detailed)
+    #expect(detailed.contains("SEEN ONLY IN EVENTS"))
+    #expect(detailed.contains("Events are supplemental"))
+}
+
+@Test func receiptOmitsEventsWithoutFlag() throws {
+    let receipt = try runEventsScenario(recordEvents: false)
+    #expect(receipt.events == nil)
+
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    let json = String(decoding: try encoder.encode(receipt), as: UTF8.self)
+    #expect(!json.contains("\"events\""))
+
+    let detailed = ReceiptRenderer.render(receipt: receipt, verbosity: .detailed)
+    #expect(!detailed.contains("Events during run"))
+    #expect(!detailed.contains("Events are supplemental"))
+}
+
+@Test func receiptDecodesWithoutEventsKey() throws {
+    let receipt = try runEventsScenario(recordEvents: true)
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    var object = try #require(
+        try JSONSerialization.jsonObject(with: encoder.encode(receipt)) as? [String: Any]
+    )
+    object.removeValue(forKey: "events")
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let decoded = try decoder.decode(Receipt.self, from: JSONSerialization.data(withJSONObject: object))
+    #expect(decoded.events == nil)
+    #expect(decoded.id == receipt.id)
 }

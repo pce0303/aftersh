@@ -4,7 +4,7 @@
 
 `aftersh` is a macOS CLI that turns changes observed around a shell command into a human-readable receipt.
 
-**Status: v0.3 in progress.** v0.1 (run → snapshot → diff → save → history/inspect) and the v0.2 first pass (selected content, literal PATH summaries, summary ranking) are complete; launchd definition summaries are the first v0.3 slice.
+**Status: v0.3 in progress.** v0.1 (run → snapshot → diff → save → history/inspect) and the v0.2 first pass (selected content, literal PATH summaries, summary ranking) are complete. v0.3 adds launchd definition summaries, opt-in package receipt comparison (`--pkgutil`), and opt-in FSEvents evidence (`--events`).
 
 ## Why aftersh?
 
@@ -46,7 +46,7 @@ The first release has one small contract:
 - Report CREATE / MODIFY / DELETE observations with coverage information.
 - Save a JSON receipt and provide `history` and `inspect`.
 
-Semantic shell diffs and importance ranking arrived in v0.2; launchd definition summaries in v0.3. FSEvents and package inspection are later milestones.
+Semantic shell diffs and importance ranking arrived in v0.2; launchd definition summaries, package receipts, and FSEvents in v0.3.
 
 ### Usage
 
@@ -63,6 +63,8 @@ aftersh run --watch . --exclude ./node_modules -- npm install
 | `-w` | `--watch` | Watch a path; repeatable |
 | | `--content` | Compare a file’s text (bounded); must be under a watch root; repeatable |
 | `-e` | `--exclude` | Exclude a path; repeatable |
+| | `--pkgutil` | Compare macOS package receipts before and after the run |
+| | `--events` | Record FSEvents under the watch roots during the run |
 | `-r` | `--receipt-output` | Choose auto, stderr, or none |
 | `-v` | `--verbose` | Print the full detailed receipt after the run |
 | `-h` | `--help` | Show help |
@@ -96,6 +98,54 @@ af -w "$AGENTS" -- cp /tmp/aftersh-launchd-demo/demo.plist "$AGENTS/com.example.
 ```
 
 When a changed `.plist` sits directly inside a watched `LaunchAgents` or `LaunchDaemons` directory, the receipt summarizes the definition: `Label`, the program path (`Program` or the first `ProgramArguments` entry), `RunAtLoad`, `KeepAlive`, and whether `StartInterval` is set. Remaining arguments and `EnvironmentVariables` are never stored. The summary says a definition was **observed**; it does not claim the job is loaded or running.
+
+### Package receipts (`--pkgutil`)
+
+```bash
+af --pkgutil -w /tmp/aftersh-test -- sudo installer -pkg ./tool.pkg -target /
+```
+
+The summary adds one line per receipt that changed:
+
+```text
+Package receipt added: com.example.tool 1.2.3
+Package receipt updated: com.example.tool (version now 1.2.4)
+Package receipt removed: com.example.tool
+```
+
+How changes are detected:
+
+- **New or removed IDs** come from `pkgutil --pkgs` before and after the run (default volume only). Only new IDs get an extra `pkgutil --pkg-info-plist` call, for their version.
+- **Same-ID updates** come from the modification time of the receipt plist in `/var/db/receipts` (or `/Library/Apple/System/Library/Receipts`). Only the new version is shown; the old version is not collected.
+
+If `pkgutil` fails or times out (10 s), or the receipt directories cannot be read, the receipt records a limitation and the run continues. The wording says a package **receipt** appeared, changed, or disappeared. It does not claim the install succeeded, which process installed it, or anything about Homebrew.
+
+### Runtime events (`--events`)
+
+Snapshots only compare the two endpoints, so a file created and removed during the run is invisible to them. `--events` records FSEvents under the watch roots while the child runs and lists paths that appear only in events:
+
+```bash
+D=/tmp/aftersh-events-demo; mkdir -p "$D"
+af --events -w "$D" -- sh -c "touch $D/tmp1; rm $D/tmp1; echo hi > $D/kept"
+```
+
+```text
+AFTERSH
+Observation  COMPLETE
+Command      /bin/sh
+Exit         0
+Events       COMPLETE
+
+CREATED
+  /tmp/aftersh-events-demo/kept
+
+(+1 path seen only in events — af inspect last)
+(+1 directory metadata — af inspect last)
+```
+
+`af inspect last` lists those paths (up to 50) under **SEEN ONLY IN EVENTS**. `Events` is `COMPLETE`, `GAPPED` (FSEvents reported dropped or coalesced events, the path cap was hit, or delivery could not be confirmed before stop), or `UNAVAILABLE` (the stream could not start). Gap reasons are listed under Limits. Events are supplemental: they show that a path was touched under the watch scope during the run window, not which process touched it, and they never change snapshot coverage status.
+
+### Summary view
 
 By default the live receipt is a **short summary** ordered by importance (semantic → created/deleted → modified; directory metadata collapsed). Full scope, limits, and low-signal directory metadata changes are in `af inspect last` (or pass `-v` on the run).
 
@@ -154,6 +204,8 @@ af -w /tmp/aftersh-test -- echo hello | grep hello
 - **Scans are non-atomic.** Races during traversal can leave unknown regions (`PARTIAL` / `FAILED`).
 - **No default whole-system watch.** You must pass `-w` / `--watch`.
 - **Detached / background writers** after the direct child exits are outside the observation window.
+- **Events are supplemental.** `--events` does not attribute paths to processes; a `GAPPED` status means some events may be missing.
+- **Package receipts are not installs.** `--pkgutil` reports receipt changes only; same-ID updates rely on receipt file modification times.
 - **Interactive and job-control edge cases** (full shell job control) are outside v0.1; ordinary foreground children should still be waited on across Ctrl-C.
 - **Privacy:** argv values, environment, and child output are not stored; paths and metadata in local receipts can still be sensitive.
 
@@ -172,14 +224,27 @@ On Apple Silicon (arm64), watching a fixture of ~2000 small files (~2040 path en
 
 Do not extrapolate from the trivial `touch` demo alone; cost scales with the size of the watched trees.
 
+Opt-in flag overhead (Apple M4 Pro, macOS 27, release build, ~2000-file `/tmp` fixture, child `touch`, median of 8 wall-clock runs, 33 package receipts on the machine):
+
+| Flags | Median | Added |
+| --- | --- | --- |
+| none | ~0.31 s | — |
+| `--pkgutil` | ~0.33 s | ~0.02 s |
+| `--events` | ~0.39 s | ~0.07 s |
+| `--pkgutil --events` | ~0.395 s | ~0.08 s |
+
+`--events` includes the drain at stop, where the watcher waits for a sentinel event to confirm delivery. `--pkgutil` cost grows with the number of new package IDs (one `pkgutil` call each).
+
 ## Architecture and layout
 
 ```text
 Validate scope and command
-  → Before snapshot
+  → Before snapshot (+ pkgutil before)
+  → Start FSEvents watcher (--events)
   → Execute command and wait
-  → After snapshot
-  → Diff
+  → Drain and stop watcher
+  → After snapshot (+ pkgutil after)
+  → Diff + semantic summaries
   → Save receipt
   → Render summary
 ```
@@ -193,6 +258,7 @@ aftersh/
 │   │   ├── Core/
 │   │   ├── Monitor/
 │   │   ├── Diff/
+│   │   ├── Inspectors/
 │   │   ├── Report/
 │   │   └── Storage/
 │   ├── af/

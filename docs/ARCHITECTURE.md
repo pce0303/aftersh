@@ -190,6 +190,7 @@ Receipt
   observationScope
   changes[]                # type, path, beforeMetadata?, afterMetadata?
   interrupted
+  events?                  # v0.3 --events: status, transientPaths, transientCount, gaps
 ```
 
 Use unique IDs, schema versioning from the first release, and atomic writes under `~/.local/share/aftersh/receipts/`. Create storage directories with mode 0700 and files with mode 0600. Use unique temporary files and atomic rename to prevent concurrent runs from overwriting each other.
@@ -206,9 +207,30 @@ First meaningful demo: turn a literal PATH addition into `PATH entry added`, wit
 
 ## v0.3 — macOS Awareness
 
-- FSEvents supplements endpoint snapshots. Define startup readiness, draining, dropped-event handling, and timing gaps before claiming runtime coverage. Events still do not establish causation.
+- FSEvents supplements endpoint snapshots (opt-in `--events`). Events still do not establish causation.
 - Launchd inspection parses changed plist files. Report a service definition observed; a plist alone does not prove the service is loaded or running.
-- Package inspection compares `pkgutil` receipts. New receipt IDs are evidence of package receipts appearing; version changes under existing IDs require separate comparison. Do not imply Homebrew awareness from `pkgutil` alone.
+- Package inspection compares `pkgutil` receipts (opt-in `--pkgutil`). New receipt IDs are evidence of package receipts appearing; version changes under existing IDs require separate comparison. Do not imply Homebrew awareness from `pkgutil` alone.
+
+Run order with both flags:
+
+```text
+Before snapshot → pkgutil before → FSEvents start → child → FSEvents drain + stop
+  → After snapshot → pkgutil after → diff + summaries → receipt
+```
+
+### FSEvents watcher contract
+
+- **Readiness.** The stream is created with `sinceWhen` set to the event id read just before creation, so events from the child are replayed even if registration is slow. Flags: `FileEvents | NoDefer | WatchRoot`, latency 0.1 s, a private dispatch queue. Paths are passed in `realpath` form because FSEvents reports resolved paths (`/private/tmp`, not `/tmp`); events are mapped back to the watch root's display form so they line up with snapshot paths.
+- **Draining.** After the child exits, the watcher writes a sentinel file in a private temp directory that the same stream watches. fseventsd delivers in event-id order, so once the sentinel arrives every earlier event has been delivered. The watcher flushes and waits up to 2 s; the stream is then stopped, invalidated, and released on every path, including launch failure.
+- **Gaps.** `MustScanSubDirs`, `UserDropped`, `KernelDropped`, `EventIdsWrapped`, and `RootChanged` are recorded with their path. An unconfirmed drain (sentinel not seen in time) and the 10,000 unique-path cap are also gaps. Any gap marks events `gapped`; a stream that cannot be created or started marks them `unavailable`. Neither changes snapshot coverage status.
+- **Filtering.** Events outside the watch roots, under excluded paths (including aftersh storage), and from the sentinel directory are dropped.
+- **Receipt.** `events` is an optional field (`status`, up to 50 `transientPaths`, `transientCount`, `gaps`); receipts without it still decode at schema version 1. Transient paths are event paths with no snapshot change — for example, a file created and removed during the run.
+
+### pkgutil comparison
+
+- New and removed IDs come from `/usr/sbin/pkgutil --pkgs` before and after the run (default volume only). The version of each new ID is read with `pkgutil --pkg-info-plist`.
+- Same-ID updates come from the modification time of the receipt plist (`/var/db/receipts`, `/Library/Apple/System/Library/Receipts`). Only the new version is shown; the previous version is not collected.
+- A failed or timed-out `pkgutil` call (10 s) or unreadable receipt directories add a limitation instead of failing the run.
 
 Broaden watch defaults only after measuring cost and noise. Do not automatically elevate privileges to bypass observation failures.
 

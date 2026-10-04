@@ -21,6 +21,7 @@ public enum ReceiptRenderer {
         public var changes: [ObservedChange]
         public var semanticSummaries: [SemanticSummary]
         public var contentLimitations: [String]
+        public var events: EventObservation?
         public var savedReceiptId: String?
         public var saveFailed: Bool
         public var verbosity: ReceiptVerbosity
@@ -37,6 +38,7 @@ public enum ReceiptRenderer {
             changes: [ObservedChange],
             semanticSummaries: [SemanticSummary] = [],
             contentLimitations: [String] = [],
+            events: EventObservation? = nil,
             savedReceiptId: String? = nil,
             saveFailed: Bool = false,
             verbosity: ReceiptVerbosity = .detailed
@@ -52,6 +54,7 @@ public enum ReceiptRenderer {
             self.changes = changes
             self.semanticSummaries = semanticSummaries
             self.contentLimitations = contentLimitations
+            self.events = events
             self.savedReceiptId = savedReceiptId
             self.saveFailed = saveFailed
             self.verbosity = verbosity
@@ -65,6 +68,7 @@ public enum ReceiptRenderer {
             changes: [ObservedChange],
             semanticSummaries: [SemanticSummary] = [],
             contentLimitations: [String] = [],
+            events: EventObservation? = nil,
             savedReceiptId: String? = nil,
             saveFailed: Bool = false,
             verbosity: ReceiptVerbosity = .detailed
@@ -81,6 +85,7 @@ public enum ReceiptRenderer {
                 changes: changes,
                 semanticSummaries: semanticSummaries,
                 contentLimitations: contentLimitations,
+                events: events,
                 savedReceiptId: savedReceiptId,
                 saveFailed: saveFailed,
                 verbosity: verbosity
@@ -129,6 +134,7 @@ public enum ReceiptRenderer {
                 changes: receipt.changes,
                 semanticSummaries: receipt.semanticSummaries,
                 contentLimitations: receipt.contentLimitations,
+                events: receipt.events,
                 savedReceiptId: receipt.id,
                 saveFailed: false,
                 verbosity: verbosity
@@ -173,6 +179,9 @@ public enum ReceiptRenderer {
                 )
             }
         }
+        if let events = input.events {
+            lines.append("Events       \(events.status.rawValue.uppercased())")
+        }
         lines.append("")
 
         let buckets = ImportanceRanker.summarize(
@@ -180,6 +189,7 @@ public enum ReceiptRenderer {
             semanticSummaries: input.semanticSummaries
         )
         let collapsedDirs = buckets.collapsedDirectoryMetadataCount
+        let eventOnlyCount = input.events?.transientCount ?? 0
 
         if input.scopeStatus == .failed {
             lines.append("Changes could not be determined: no comparable observation coverage.")
@@ -205,6 +215,7 @@ public enum ReceiptRenderer {
             {
                 lines.append("No changes detected in successfully observed paths.")
             }
+            appendEventOnlyNote(&lines, count: eventOnlyCount)
         } else if !buckets.hasNotableChanges {
             if collapsedDirs > 0 {
                 lines.append(
@@ -213,10 +224,12 @@ public enum ReceiptRenderer {
             } else {
                 lines.append("No changes detected in successfully observed paths.")
             }
+            appendEventOnlyNote(&lines, count: eventOnlyCount)
         } else {
             appendRankedSummaryBody(&lines, buckets: buckets)
+            appendEventOnlyNote(&lines, count: eventOnlyCount)
             if collapsedDirs > 0 {
-                if lines.last != "" {
+                if lines.last != "" && eventOnlyCount == 0 {
                     lines.append("")
                 }
                 lines.append(
@@ -241,6 +254,14 @@ public enum ReceiptRenderer {
         lines.append("")
         appendSaveFooter(&lines, input: input)
         return lines.joined(separator: "\n")
+    }
+
+    private static func appendEventOnlyNote(_ lines: inout [String], count: Int) {
+        guard count > 0 else { return }
+        if lines.last != "" {
+            lines.append("")
+        }
+        lines.append("(+\(count) path\(count == 1 ? "" : "s") seen only in events — af inspect last)")
     }
 
     /// Summary order: semantic → CREATED → DELETED → MODIFIED.
@@ -323,6 +344,24 @@ public enum ReceiptRenderer {
         appendChangesDetailed(&lines, status: input.scopeStatus, changes: input.changes)
         lines.append("")
 
+        if let events = input.events {
+            lines.append("Events during run")
+            lines.append("  \(events.status.rawValue.uppercased())")
+            if events.transientPaths.isEmpty {
+                lines.append("  No paths seen only in events.")
+            } else {
+                lines.append("SEEN ONLY IN EVENTS")
+                for path in events.transientPaths {
+                    lines.append("  \(path)")
+                }
+                let hidden = events.transientCount - events.transientPaths.count
+                if hidden > 0 {
+                    lines.append("  … +\(hidden) more")
+                }
+            }
+            lines.append("")
+        }
+
         lines.append("Limits")
         lines.append(
             "  Metadata comparison; optional selected-file content (max \(ContentCapture.maxBytes) bytes)."
@@ -330,6 +369,12 @@ public enum ReceiptRenderer {
         lines.append(
             "  Scans are non-atomic. Observation is not causation."
         )
+        if let events = input.events {
+            lines.append("  Events are supplemental and do not identify which process changed a path.")
+            for gap in events.gaps {
+                lines.append("  event gap: \(gap)")
+            }
+        }
         if !input.contentLimitations.isEmpty {
             for limitation in input.contentLimitations {
                 lines.append("  \(limitation)")

@@ -7,19 +7,27 @@ struct RunManager: Sendable {
     private let snapshotter: Snapshotter
     private let runStore: RunStore
     private let verbosity: ReceiptVerbosity
+    /// Set only when `--pkgutil` is passed.
+    private let packageSource: PackageReceiptSource?
+    /// Set only when `--events` is passed.
+    private let recordEvents: Bool
 
     init(
         processRunner: ProcessRunner,
         receiptWriter: ReceiptWriter,
         snapshotter: Snapshotter = Snapshotter(),
         runStore: RunStore = RunStore(),
-        verbosity: ReceiptVerbosity = .summary
+        verbosity: ReceiptVerbosity = .summary,
+        packageSource: PackageReceiptSource? = nil,
+        recordEvents: Bool = false
     ) {
         self.processRunner = processRunner
         self.receiptWriter = receiptWriter
         self.snapshotter = snapshotter
         self.runStore = runStore
         self.verbosity = verbosity
+        self.packageSource = packageSource
+        self.recordEvents = recordEvents
     }
 
     /// Runs the child command and returns the wrapper exit code.
@@ -84,12 +92,19 @@ struct RunManager: Sendable {
             beforeContent[selection.canonical] = snap
         }
         let launchdBefore = LaunchdInspector.captureBefore(snapshot: before)
+        let packageBefore = packageSource.map { PackageReceiptInspector.capture(source: $0) }
+
+        let watcher = recordEvents
+            ? EventWatcher(roots: prepared.watched, excludedCanonical: prepared.excludeCanonical)
+            : nil
+        watcher?.start()
 
         let startedAt = Date()
         let termination: ProcessTermination
         do {
             termination = try processRunner.run(executable: resolved, arguments: arguments)
         } catch let error as ProcessLaunchError {
+            _ = watcher?.stop()
             let endedAt = Date()
             let after = snapshotter.capture(
                 watched: prepared.watched,
@@ -107,14 +122,18 @@ struct RunManager: Sendable {
                 beforeContent: beforeContent,
                 afterContent: [:],
                 contentSelections: contentSelections,
-                launchdBefore: launchdBefore
+                launchdBefore: launchdBefore,
+                packageResult: nil,
+                eventAggregator: nil
             )
             return launchExitCode(error)
         } catch {
+            _ = watcher?.stop()
             DiagnosticWriter.error("error: failed to launch: \(error.localizedDescription)")
             return 126
         }
         let endedAt = Date()
+        let eventAggregator = watcher?.stop()
 
         let after = snapshotter.capture(
             watched: prepared.watched,
@@ -125,6 +144,15 @@ struct RunManager: Sendable {
         var afterContent: [String: ContentCapture.Snapshot] = [:]
         for selection in contentSelections {
             afterContent[selection.canonical] = ContentCapture.capture(path: selection)
+        }
+
+        var packageResult: (summaries: [SemanticSummary], limitations: [String])?
+        if let packageSource, let packageBefore {
+            packageResult = PackageReceiptInspector.summarize(
+                before: packageBefore,
+                after: PackageReceiptInspector.capture(source: packageSource),
+                source: packageSource
+            )
         }
 
         let scope = makeScope(prepared: prepared, before: before, after: after)
@@ -138,7 +166,9 @@ struct RunManager: Sendable {
             beforeContent: beforeContent,
             afterContent: afterContent,
             contentSelections: contentSelections,
-            launchdBefore: launchdBefore
+            launchdBefore: launchdBefore,
+            packageResult: packageResult,
+            eventAggregator: eventAggregator
         )
 
         return termination.wrapperExitCode
@@ -183,9 +213,12 @@ struct RunManager: Sendable {
         beforeContent: [String: ContentCapture.Snapshot],
         afterContent: [String: ContentCapture.Snapshot],
         contentSelections: [NormalizedPath],
-        launchdBefore: [String: LaunchdInspector.BeforeState]
+        launchdBefore: [String: LaunchdInspector.BeforeState],
+        packageResult: (summaries: [SemanticSummary], limitations: [String])?,
+        eventAggregator: EventAggregator?
     ) {
         let changes = DiffEngine.diff(before: scope.before, after: scope.after)
+        let events = eventAggregator?.observation(changes: changes)
         let duration = endedAt.timeIntervalSince(startedAt)
 
         var semanticSummaries: [SemanticSummary] = []
@@ -213,6 +246,11 @@ struct RunManager: Sendable {
         semanticSummaries.append(contentsOf: launchd.summaries)
         contentLimitations.append(contentsOf: launchd.limitations)
 
+        if let packageResult {
+            semanticSummaries.append(contentsOf: packageResult.summaries)
+            contentLimitations.append(contentsOf: packageResult.limitations)
+        }
+
         // Raw content stays only in local dictionaries above; do not copy into Receipt.
         var savedId: String?
         var saveFailed = false
@@ -229,6 +267,7 @@ struct RunManager: Sendable {
                 changes: changes,
                 semanticSummaries: semanticSummaries,
                 contentLimitations: contentLimitations,
+                events: events,
                 interrupted: false
             )
             do {
@@ -253,6 +292,7 @@ struct RunManager: Sendable {
                 changes: changes,
                 semanticSummaries: semanticSummaries,
                 contentLimitations: contentLimitations,
+                events: events,
                 savedReceiptId: savedId,
                 saveFailed: saveFailed,
                 verbosity: verbosity
